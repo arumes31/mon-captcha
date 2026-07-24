@@ -27,10 +27,17 @@ import { state } from './state.js';
 import { mulberry32 } from './random.js';
 import { getGroundY, isWaterAt, VENT, PARTITION } from './heightfield.js';
 import { spawnParticleBurst } from './particles.js';
+import { weatherState } from './weather/weather.js';
 
 // Public registry (course polyline + head pool + steam junction), read by the
 // ?probe hook and lavaAt below. Empty until buildLava() runs.
 export const LAVA = { course: [], pool: null, steam: null };
+
+// Per-crust-instance flow data (item 232) — kept module-side (not on `state`,
+// mirroring LAVA/course-only-pure convention) since it is purely a build->update
+// handoff for this file's own animation loop, reset every buildLava() call.
+let lavaCells = [];
+const _flowColor = new THREE.Color();
 
 /* ------------------------------------------------------------
    Seeded course generation — a winding polyline flowing outward
@@ -50,19 +57,22 @@ function buildLavaCourse() {
 
     const nodes = [];
     let x = VENT.x, z = VENT.z;
+    let uAcc = 0; // cumulative arc-length from the vent — drives the item 232/235
+                  // flow-wave animation and the vent-biased ember concentration
     const N = 9;
     for (let i = 0; i < N; i++) {
         const hw = Math.max(0.95, 2.4 - i * 0.14 + (rng() - 0.5) * 0.3);
-        nodes.push({ x, z, hw });
+        nodes.push({ x, z, hw, u: uAcc });
         ang += (rng() - 0.5) * 0.6;                  // meander
         const step = 3.4 + rng() * 1.6;
         const nx = x + Math.cos(ang) * step, nz = z + Math.sin(ang) * step;
         if (Math.hypot(nx, nz) > half - 4 || Math.hypot(nx, nz) < CONFIG.POND_RADIUS + 2) break;
         if (isWaterAt(nx, nz, 0.6)) {                // met water -> steam junction, then stop
-            nodes.push({ x: nx, z: nz, hw: Math.max(0.9, hw - 0.2), water: true });
+            nodes.push({ x: nx, z: nz, hw: Math.max(0.9, hw - 0.2), water: true, u: uAcc + step });
             LAVA.steam = { x: nx, z: nz };
             break;
         }
+        uAcc += step;
         x = nx; z = nz;
     }
     LAVA.course = nodes;
@@ -104,7 +114,8 @@ export function lavaAt(x, z) {
         const px = a.x + abx * s, pz = a.z + abz * s;
         const lat = Math.hypot(x - px, z - pz);
         const hw = a.hw + (b.hw - a.hw) * s;
-        if (!best || lat - hw < best.lat - best.hw) best = { lat, hw, projX: px, projZ: pz };
+        const u = (a.u !== undefined && b.u !== undefined) ? a.u + (b.u - a.u) * s : undefined;
+        if (!best || lat - hw < best.lat - best.hw) best = { lat, hw, projX: px, projZ: pz, u };
     }
     const pool = LAVA.pool;
     if (pool) {
@@ -126,6 +137,7 @@ export function lavaAt(x, z) {
    ------------------------------------------------------------ */
 export function buildLava() {
     LAVA.course = []; LAVA.pool = null; LAVA.steam = null;
+    lavaCells = [];
     buildLavaCourse();
     const nodes = LAVA.course;
     if (nodes.length < 2) return;
@@ -148,7 +160,13 @@ export function buildLava() {
             if (!lv || !lv.inside) continue;
             const y = getGroundY(x, z) + V * 0.15;   // molten crust sitting just proud
             const jit = (crustR() - 0.5) * 0.08;
-            cells.push({ x, y, z, jit });
+            // item 232 (flow animation): course cells carry lv.u (arc-length along
+            // the course) so the per-frame update can sweep a brightness wave
+            // downstream; pool cells have no u, so a radial wave (a slow "boil")
+            // stands in instead.
+            const flowU = lv.u !== undefined ? lv.u : null;
+            const radial = flowU === null ? Math.hypot(x - LAVA.pool.x, z - LAVA.pool.z) : 0;
+            cells.push({ x, y, z, jit, flowU, radial });
         }
     }
     if (cells.length) {
@@ -173,6 +191,31 @@ export function buildLava() {
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         state.scene.add(mesh);
         state.lavaRiver = mesh;
+        lavaCells = cells;
+    }
+
+    // item 231: warm bounce point-lights along the course so nearby rock/steam
+    // pick up lava glow beyond the emissive crust surface itself. Skipped
+    // entirely on a confirmed software renderer (state.softwareRenderer, set by
+    // engine.js before the world builds) rather than only gated live, so a weak
+    // device never pays for the light objects at all; still re-checked live
+    // against state.qualityLevel each frame in case FPS sampling steps down.
+    if (!state.softwareRenderer) {
+        const lights = [];
+        const poolLight = new THREE.PointLight(0xff6a2a, 2.2, 9, 2);
+        poolLight.position.set(LAVA.pool.x, getGroundY(LAVA.pool.x, LAVA.pool.z) + 1.3, LAVA.pool.z);
+        state.scene.add(poolLight);
+        lights.push(poolLight);
+        const midNode = nodes[Math.floor(nodes.length / 2)];
+        if (midNode) {
+            const courseLight = new THREE.PointLight(0xff5a1f, 1.6, 7, 2);
+            courseLight.position.set(midNode.x, getGroundY(midNode.x, midNode.z) + 1.0, midNode.z);
+            state.scene.add(courseLight);
+            lights.push(courseLight);
+        }
+        state.lavaBounceLights = lights;
+    } else {
+        state.lavaBounceLights = [];
     }
 
     // --- ember motes drifting up along the banks (closed-form loop) ---
@@ -181,7 +224,10 @@ export function buildLava() {
     const seedR = mulberry32((CONFIG.WORLD_SEED ^ 0xe1b005) >>> 0);
     const embers = [];
     for (let i = 0; i < EN; i++) {
-        const seg = Math.min(nodes.length - 2, Math.floor(seedR() * (nodes.length - 1)));
+        // item 235: bias segment choice toward LOW index (nearer the vent) so
+        // ember density visibly concentrates at the source rather than
+        // spreading flat across the whole course.
+        const seg = Math.min(nodes.length - 2, Math.floor(Math.pow(seedR(), 1.7) * (nodes.length - 1)));
         const a = nodes[seg], b = nodes[seg + 1], s = seedR();
         const bx = a.x + (b.x - a.x) * s, bz = a.z + (b.z - a.z) * s;
         embers.push({
@@ -228,7 +274,64 @@ export function buildLava() {
     state.lavaHazeTex = hMat.map;
 
     // --- steam column where lava meets water ---
-    if (LAVA.steam) buildSteamColumn(LAVA.steam);
+    if (LAVA.steam) {
+        buildSteamColumn(LAVA.steam);
+        buildMoltenReflection(LAVA.steam); // item 241
+    }
+
+    // --- item 240: ash-fall drifting over the course, shown only while the
+    //     volcanic zone's weather sits in 'overcast' (distinct from the
+    //     rising ember/haze — these motes fall) ---
+    buildAshFall(minX, maxX, minZ, maxZ);
+}
+
+// item 241: a soft warm glow patch on the adjacent water surface at the
+// steam junction — molten light reflecting off the nearest water feature.
+function buildMoltenReflection(pt) {
+    const y = Math.max(getGroundY(pt.x, pt.z), CONFIG.POND_WATER_LEVEL) + 0.03;
+    const geo = new THREE.CircleGeometry(1.7, 20);
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff6a2a, transparent: true, opacity: 0.32,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(pt.x, y, pt.z);
+    mesh.renderOrder = 2;
+    state.scene.add(mesh);
+    state.lavaGlowReflection = mesh;
+}
+
+// item 240: ash motes — same closed-form-loop Points technique as the embers/
+// haze above, but falling (not rising) and only visible in 'overcast' weather.
+function buildAshFall(minX, maxX, minZ, maxZ) {
+    const AN = 26;
+    const apos = new Float32Array(AN * 3);
+    const seedR = mulberry32((CONFIG.WORLD_SEED ^ 0xa54a11) >>> 0);
+    const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+    const spanX = Math.max(6, (maxX - minX) / 2 + 3), spanZ = Math.max(6, (maxZ - minZ) / 2 + 3);
+    const motes = [];
+    for (let i = 0; i < AN; i++) {
+        motes.push({
+            ox: (seedR() * 2 - 1) * spanX, oz: (seedR() * 2 - 1) * spanZ,
+            topY: getGroundY(cx, cz) + 5 + seedR() * 3, speed: 0.5 + seedR() * 0.5,
+            phase: seedR(), sway: 0.3 + seedR() * 0.5,
+        });
+        apos[i * 3 + 1] = -1000;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(apos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: 0x8a8378, size: 0.13, transparent: true, opacity: 0.55,
+        map: makeHazeSprite(), blending: THREE.NormalBlending, depthWrite: false, sizeAttenuation: true,
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.visible = false;
+    state.scene.add(pts);
+    state.lavaAsh = pts;
+    state.lavaAshData = { motes, cx, cz };
+    state.lavaAshTex = mat.map;
 }
 
 function makeHazeSprite() {
@@ -275,9 +378,45 @@ export function updateLava(dt, elapsed) {
     const low = state.qualityLevel === 'low';
 
     // molten glow pulse (two beating sines read as a slow flowing shimmer)
+    const glowPulse = 1.7 + Math.sin(elapsed * 1.4) * 0.35 + Math.sin(elapsed * 0.7 + 1.1) * 0.2;
     if (state.lavaRiver) {
-        state.lavaRiver.material.emissiveIntensity =
-            1.7 + Math.sin(elapsed * 1.4) * 0.35 + Math.sin(elapsed * 0.7 + 1.1) * 0.2;
+        state.lavaRiver.material.emissiveIntensity = glowPulse;
+    }
+
+    // item 232: traveling brightness wave across the crust instances — the
+    // closest thing to a scrolling-UV "flow" look available without a shared
+    // lava texture (each voxel is a solid instance color, not UV-mapped).
+    if (state.lavaRiver && lavaCells.length) {
+        const mesh = state.lavaRiver;
+        for (let i = 0; i < lavaCells.length; i++) {
+            const c = lavaCells[i];
+            const phase = c.flowU !== null ? c.flowU * 0.55 - elapsed * 2.0 : c.radial * 1.2 - elapsed * 1.6;
+            const wave = 0.82 + 0.18 * (Math.sin(phase) * 0.5 + 0.5);
+            _flowColor.setRGB((0.20 + c.jit) * wave, (0.06 + c.jit * 0.4) * wave, 0.03 * wave);
+            mesh.setColorAt(i, _flowColor);
+        }
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+
+    // items 233/239: rare popping-bubble bursts at the crust surface (skipped
+    // on 'low' — matches the file's existing low-tier "fewer particles" rule)
+    if (!low && !state.isPaused && lavaCells.length && Math.random() < 0.035) {
+        const c = lavaCells[(Math.random() * lavaCells.length) | 0];
+        spawnParticleBurst(c.x, c.y + 0.12, c.z, 0xffb35a, 2 + ((Math.random() * 2) | 0));
+    }
+
+    // item 231: bounce lights stay live-gated to the CURRENT tier (not just the
+    // build-time softwareRenderer check) so an FPS-driven step-down to 'low'
+    // also turns these off.
+    if (state.lavaBounceLights && state.lavaBounceLights.length) {
+        const on = state.qualityLevel !== 'low';
+        for (const lgt of state.lavaBounceLights) lgt.visible = on;
+    }
+
+    // item 241: molten reflection patch on the adjacent water, pulsing with
+    // the same glow beat as the crust itself
+    if (state.lavaGlowReflection) {
+        state.lavaGlowReflection.material.opacity = 0.22 + (glowPulse - 1.35) * 0.22;
     }
 
     // embers
@@ -319,6 +458,11 @@ export function updateLava(dt, elapsed) {
     if (state.lavaSteam && state.lavaSteamData) {
         state.lavaSteam.visible = !low;
         if (!low) {
+            // item 238: heavier steam while rain actually hits the hot flow —
+            // ties precipitation state to the steam column's density/opacity.
+            const ws = weatherState();
+            const raining = ws.cur === 'rain' || ws.cur === 'thunderstorm' || ws.next === 'rain' || ws.next === 'thunderstorm';
+            const rainBoost = raining ? 1.7 : 1.0;
             const arr = state.lavaSteam.geometry.attributes.position.array;
             const { puffs, baseY } = state.lavaSteamData;
             const sx = LAVA.steam.x, sz = LAVA.steam.z;
@@ -330,10 +474,30 @@ export function updateLava(dt, elapsed) {
                 arr[i * 3 + 2] = sz + e.oz + Math.cos(elapsed * 0.5 + e.phase * 11) * e.sway * t;
             }
             state.lavaSteam.geometry.attributes.position.needsUpdate = true;
-            state.lavaSteam.material.opacity = 0.32 + Math.sin(elapsed * 2.1) * 0.12;
-            if (!state.isPaused && Math.random() < 0.04) {
+            state.lavaSteam.material.opacity = Math.min(0.62, (0.32 + Math.sin(elapsed * 2.1) * 0.12) * rainBoost);
+            if (!state.isPaused && Math.random() < 0.04 * rainBoost) {
                 spawnParticleBurst(sx + (Math.random() - 0.5), baseY + 0.2, sz + (Math.random() - 0.5), 0xf0f0ea, 2);
             }
+        }
+    }
+
+    // item 240: ash-fall drift, visible only while the local weather sits in
+    // 'overcast' (falls DOWN toward the ground, unlike the rising ember/haze)
+    if (state.lavaAsh && state.lavaAshData) {
+        const ws2 = weatherState();
+        const overcastish = ws2.cur === 'overcast' || ws2.next === 'overcast';
+        state.lavaAsh.visible = !low && overcastish;
+        if (!low && overcastish) {
+            const arr = state.lavaAsh.geometry.attributes.position.array;
+            const { motes, cx, cz } = state.lavaAshData;
+            for (let i = 0; i < motes.length; i++) {
+                const m = motes[i];
+                const t = (elapsed * m.speed + m.phase) % 1; // 0 at top -> 1 at ground
+                arr[i * 3] = cx + m.ox + Math.sin(elapsed * 0.5 + m.phase * 13) * m.sway;
+                arr[i * 3 + 1] = m.topY - t * 5.5;
+                arr[i * 3 + 2] = cz + m.oz + Math.cos(elapsed * 0.45 + m.phase * 11) * m.sway;
+            }
+            state.lavaAsh.geometry.attributes.position.needsUpdate = true;
         }
     }
 
@@ -366,8 +530,13 @@ export function disposeLava() {
     disposeObj(state.lavaEmbers); state.lavaEmbers = null;
     disposeObj(state.lavaHaze); state.lavaHaze = null;
     disposeObj(state.lavaSteam); state.lavaSteam = null;
-    state.lavaEmberData = null; state.lavaHazeData = null; state.lavaSteamData = null;
+    disposeObj(state.lavaAsh); state.lavaAsh = null;
+    disposeObj(state.lavaGlowReflection); state.lavaGlowReflection = null;
+    if (state.lavaBounceLights) { for (const l of state.lavaBounceLights) disposeObj(l); state.lavaBounceLights = null; }
+    state.lavaEmberData = null; state.lavaHazeData = null; state.lavaSteamData = null; state.lavaAshData = null;
     if (state.lavaHazeTex) { try { state.lavaHazeTex.dispose(); } catch (e) {} state.lavaHazeTex = null; }
     if (state.lavaSteamTex) { try { state.lavaSteamTex.dispose(); } catch (e) {} state.lavaSteamTex = null; }
+    if (state.lavaAshTex) { try { state.lavaAshTex.dispose(); } catch (e) {} state.lavaAshTex = null; }
+    lavaCells = [];
     LAVA.course = []; LAVA.pool = null; LAVA.steam = null;
 }
