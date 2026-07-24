@@ -1,0 +1,23 @@
+{
+  "name": "3dcaptcha-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "DEV-ONLY QA harness for the 3D Voxel CAPTCHA. Never shipped; src/ stays buildless and dependency-free.",
+  "type": "module",
+  "scripts": {
+    "itest": "node itest.mjs",
+    "visreg": "node visreg.mjs",
+    "visreg:update": "node visreg.mjs --update",
+    "perfbudget": "node perfbudget.mjs",
+    "fuzzseed": "node fuzzseed.mjs",
+    "matrix": "node matrix.mjs",
+    "axe": "node axe.mjs",
+    "all": "node itest.mjs && node perfbudget.mjs && node fuzzseed.mjs && node axe.mjs && node visreg.mjs && node matrix.mjs"
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.2",
+    "pixelmatch": "^5.3.0",
+    "playwright": "~1.61.0",
+    "pngjs": "^7.0.0"
+  }
+}

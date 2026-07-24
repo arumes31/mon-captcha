@@ -1,0 +1,11 @@
+﻿import { chromium } from "playwright";
+import { SWIFTSHADER_ARGS } from "./harness.mjs";
+const b = await chromium.launch({ headless: true, args: SWIFTSHADER_ARGS });
+const p = await b.newPage();
+p.on("pageerror", e => console.log("PAGEERROR:", e.message));
+p.on("console", m => { if (m.type()==="error") console.log("CONSOLE.ERR:", m.text()); });
+await p.goto("http://localhost:8347/index.html?probe&seed=777", { waitUntil: "networkidle", timeout: 30000 });
+await p.waitForTimeout(2500);
+const st = await p.evaluate(() => ({ hasCaptcha: !!window.__captcha, hasProbe: !!window.__probe, loadingHidden: (document.getElementById("loading")||{}).classList ? document.getElementById("loading").classList.contains("hidden") : null }));
+console.log("STATE:", JSON.stringify(st));
+await b.close();

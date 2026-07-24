@@ -1,0 +1,18 @@
+# Dockerfile COPYs an explicit allow-list of files, so nothing here can leak
+# into the image by accident — this just keeps the build context small/fast
+# by not shipping dev-only stuff to the daemon in the first place.
+.git
+.github
+.claude
+.roo
+.clinerules
+.roorules
+docs
+graphify-out
+tests
+node_modules
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+.gitignore

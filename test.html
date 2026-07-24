@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description"
+        content="3D voxel CAPTCHA test harness — loads the game and exposes a live diagnostic panel.">
+    <meta name="theme-color" content="#2b1a12">
+    <title>3D Voxel CAPTCHA — Test Harness</title>
+
+    <!-- Import map: resolve bare specifiers 'three' and 'three/addons/' to jsdelivr CDN -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "three/addons/objects/Sky.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Sky.js",
+        "three/addons/objects/Water.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Water.js",
+        "three/addons/postprocessing/EffectComposer.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js",
+        "three/addons/postprocessing/RenderPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js",
+        "three/addons/postprocessing/UnrealBloomPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js",
+        "three/addons/postprocessing/OutputPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js"
+      }
+    }
+    </script>
+
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Test harness panel styling (inline so test.html stays self-contained).
+         Skinned to match the "Golden Hour Field Guide" HUD in style.css:
+         walnut glass, amber headings, warm state colors. -->
+    <style>
+        #test-panel {
+            position: fixed;
+            top: max(env(safe-area-inset-top), 12px);
+            right: max(env(safe-area-inset-right), 12px);
+            z-index: 1000;
+            width: 320px;
+            max-width: calc(100vw - 24px);
+            max-height: calc(100vh - 24px);
+            overflow-y: auto;
+            box-sizing: border-box;
+            padding: 14px 16px 12px;
+            background:
+                repeating-linear-gradient(105deg, rgba(255, 205, 140, 0.04) 0 9px, rgba(255, 205, 140, 0) 9px 20px),
+                linear-gradient(180deg, rgba(48, 29, 19, 0.92), rgba(30, 18, 12, 0.92));
+            color: #f5e7cf;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 1.45;
+            border: 1px solid rgba(20, 10, 6, 0.9);
+            border-radius: 14px;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 214, 158, 0.22),
+                inset 0 0 0 1px rgba(244, 163, 73, 0.14),
+                0 3px 0 rgba(20, 10, 6, 0.4),
+                0 14px 30px -10px rgba(20, 10, 6, 0.6);
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+            pointer-events: auto;
+            user-select: text;
+        }
+
+        #test-panel h1 {
+            margin: 0 0 10px;
+            font-family: 'Nunito', 'Segoe UI', system-ui, sans-serif;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: #f2a33c;
+            text-shadow: 0 1px 0 rgba(20, 10, 6, 0.6);
+        }
+
+        #test-panel .tp-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 10px;
+            padding: 3px 0;
+            border-bottom: 1px dashed rgba(255, 214, 158, 0.14);
+        }
+
+        #test-panel .tp-row:last-of-type {
+            border-bottom: none;
+        }
+
+        #test-panel .tp-label {
+            color: #b59f88;
+            flex: 0 0 auto;
+        }
+
+        #test-panel .tp-value {
+            color: #fdf3df;
+            text-align: right;
+            word-break: break-all;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #test-panel .tp-value.ok {
+            color: #8fc177;
+            font-weight: 600;
+        }
+
+        #test-panel .tp-value.pending {
+            color: #eec36a;
+        }
+
+        #test-panel .tp-value.err {
+            color: #ef8570;
+        }
+
+        #test-panel .tp-token {
+            margin-top: 10px;
+            padding: 8px 10px;
+            background: rgba(16, 8, 4, 0.45);
+            border: 1px solid rgba(255, 214, 158, 0.12);
+            border-radius: 8px;
+            font-size: 11px;
+            color: #e3d2b6;
+            word-break: break-all;
+            min-height: 16px;
+        }
+
+        #test-panel .tp-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        #test-panel button {
+            flex: 1 1 auto;
+            padding: 6px 10px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            color: #ffd9a0;
+            background: rgba(242, 163, 60, 0.14);
+            border: 1px solid rgba(242, 163, 60, 0.4);
+            border-radius: 8px;
+            box-shadow: 0 2px 0 rgba(20, 10, 6, 0.5);
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.1s ease;
+        }
+
+        #test-panel button:hover {
+            background: rgba(242, 163, 60, 0.26);
+            border-color: rgba(242, 163, 60, 0.65);
+        }
+
+        #test-panel button:active {
+            background: rgba(242, 163, 60, 0.34);
+            transform: translateY(2px);
+            box-shadow: 0 0 0 rgba(20, 10, 6, 0.5);
+        }
+
+        #test-panel .tp-log {
+            margin-top: 10px;
+            padding: 8px 10px;
+            background: rgba(16, 8, 4, 0.45);
+            border: 1px solid rgba(255, 214, 158, 0.12);
+            border-radius: 8px;
+            height: 140px;
+            overflow-y: auto;
+            font-size: 11px;
+            color: #cbb99d;
+            white-space: pre-wrap;
+        }
+
+        #test-panel .tp-log .tp-log-line {
+            display: block;
+            margin: 0;
+        }
+
+        #test-panel .tp-log .tp-log-line.sys {
+            color: #b59f88;
+        }
+
+        #test-panel .tp-log .tp-log-line.win {
+            color: #8fc177;
+        }
+
+        #test-panel .tp-log .tp-log-line.err {
+            color: #ef8570;
+        }
+
+        @media (max-width: 480px) {
+            #test-panel {
+                width: calc(100vw - 16px);
+                top: max(env(safe-area-inset-top), 8px);
+                right: max(env(safe-area-inset-right), 8px);
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 3D canvas mounts here -->
+    <div id="captcha-container"></div>
+
+    <!-- Heads-up display overlay (pointer-events disabled; children opt back in) -->
+    <div id="hud">
+        <!-- Top-left HUD column: capture counter + control hints -->
+        <div class="hud-corner">
+            <div id="counter" class="hud-chip">Captured: 0/6</div>
+            <div id="instructions" class="hud-chip">
+                <kbd>WASD</kbd> / <kbd>Arrows</kbd> to move &middot; <kbd>Space</kbd> to jump &middot;
+                <kbd>Ctrl</kbd> to crouch &middot; <kbd>Mouse</kbd> to look &middot; <kbd>Click</kbd> to throw capture balls
+            </div>
+        </div>
+
+        <!-- Center crosshair (CSS-drawn via pseudo-elements) -->
+        <div id="crosshair"></div>
+
+        <!-- Touch controls (mobile): virtual joystick + drag-to-look zone +
+             jump/crouch/throw/pause buttons. Hidden until touch-controls.js
+             detects a coarse (touch) pointer; faded in only while playing. -->
+        <div id="touch-controls">
+            <div id="touch-look-zone" aria-hidden="true"></div>
+            <div id="touch-move-zone" aria-hidden="true">
+                <div id="touch-move-knob"></div>
+            </div>
+            <button id="touch-jump-btn" class="touch-btn" type="button" aria-label="Jump">Jump</button>
+            <button id="touch-crouch-btn" class="touch-btn" type="button" aria-label="Toggle crouch">Crouch</button>
+            <button id="touch-throw-btn" class="touch-btn" type="button" aria-label="Throw capture ball">Throw</button>
+            <button id="touch-pause-btn" class="touch-btn" type="button" aria-label="Pause">&#10074;&#10074;</button>
+        </div>
+
+        <!-- Success modal: shown when enough creatures are captured -->
+        <div id="success-modal">
+            <div class="confetti" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <div id="success-card">
+                <div id="success-check"></div>
+                <h1>Human Verified</h1>
+                <p>You scored 6 capture points. Verification complete.</p>
+                <button id="success-continue" type="button">Continue</button>
+            </div>
+        </div>
+
+        <!-- Click-to-play start overlay (doubles as the pause screen; JS rewrites h1 + first p) -->
+        <div id="click-to-play">
+            <div class="ctp-scene" aria-hidden="true">
+                <span class="sunburst"></span>
+                <span class="voxel v1"></span>
+                <span class="voxel v2"></span>
+                <span class="voxel v3"></span>
+                <span class="voxel v4"></span>
+            </div>
+            <div id="click-to-play-card">
+                <div class="ctp-kicker">3D Voxel CAPTCHA</div>
+                <h1>Click to play</h1>
+                <p>Score 6 capture points to prove you're human &mdash; rarer creatures are worth 2.</p>
+                <p class="hint">Click anywhere to lock your pointer and begin.</p>
+            </div>
+        </div>
+
+        <!-- Pause overlay: shown when pointer unlocks mid-game -->
+        <div id="pause-overlay">
+            <div class="card">
+                <h1>Paused</h1>
+                <p>Click to resume</p>
+            </div>
+        </div>
+
+        <!-- Bottom-center play hint pill -->
+        <div id="play-hint" class="hud-chip">Move with <kbd>WASD</kbd> &middot; <kbd>Space</kbd> to jump &middot; <kbd>Ctrl</kbd> to crouch &middot; <kbd>Click</kbd> to capture</div>
+
+        <!-- Error fallback: shown if WebGL/init fails -->
+        <div id="error-message">
+            <p>This CAPTCHA needs WebGL to run. Please enable hardware acceleration or try a different browser.</p>
+        </div>
+    </div>
+
+    <!-- Inline loading indicator: hidden once main.js initializes -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading 3D CAPTCHA&hellip;</p>
+    </div>
+
+    <!-- Game module -->
+    <script type="module" src="main.js" crossorigin="anonymous"></script>
+
+    <!-- Test harness: live diagnostic panel. Loaded as a module so it runs after main.js. -->
+    <script type="module">
+        'use strict';
+
+        const TOTAL_CREATURES = 6; // capture POINTS required (commons 1, rarer 2)
+        const POLL_INTERVAL_MS = 250;
+
+        // ---- DOM refs (panel is built inline so we control every node) ----
+        const panel = document.createElement('div');
+        panel.id = 'test-panel';
+        panel.setAttribute('aria-label', 'CAPTCHA test harness');
+        panel.textContent = ''; // ensure clean
+
+        panel.innerHTML = `
+            <h1>CAPTCHA Test Harness</h1>
+            <div class="tp-row"><span class="tp-label">Status</span><span class="tp-value" id="tp-status">Waiting</span></div>
+            <div class="tp-row"><span class="tp-label">Captured</span><span class="tp-value" id="tp-captured">0/${TOTAL_CREATURES}</span></div>
+            <div class="tp-row"><span class="tp-label">Solved</span><span class="tp-value" id="tp-solved">No</span></div>
+            <div class="tp-row"><span class="tp-label">FPS</span><span class="tp-value" id="tp-fps">—</span></div>
+            <div class="tp-row"><span class="tp-label">Quality</span><span class="tp-value" id="tp-quality">—</span></div>
+            <div class="tp-row"><span class="tp-label">Token</span><span class="tp-value" id="tp-token-status">—</span></div>
+            <div class="tp-token" id="tp-token">(no token yet)</div>
+            <div class="tp-actions">
+                <button type="button" id="tp-copy">Copy Token</button>
+                <button type="button" id="tp-reload">Reload</button>
+            </div>
+            <div class="tp-log" id="tp-log" aria-live="polite"></div>
+        `;
+        document.body.appendChild(panel);
+
+        const elStatus = document.getElementById('tp-status');
+        const elCaptured = document.getElementById('tp-captured');
+        const elSolved = document.getElementById('tp-solved');
+        const elFps = document.getElementById('tp-fps');
+        const elQuality = document.getElementById('tp-quality');
+        const elTokenStatus = document.getElementById('tp-token-status');
+        const elToken = document.getElementById('tp-token');
+        const elLog = document.getElementById('tp-log');
+        const btnCopy = document.getElementById('tp-copy');
+        const btnReload = document.getElementById('tp-reload');
+
+        // ---- Logging (textContent only — never innerHTML for log lines) ----
+        const MAX_LOG_LINES = 200;
+        const logLines = [];
+
+        const stamp = () => {
+            const d = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+        };
+
+        const log = (msg, kind = '') => {
+            const line = document.createElement('span');
+            line.className = `tp-log-line${kind ? ' ' + kind : ''}`;
+            line.textContent = `[${stamp()}] ${msg}`;
+            elLog.appendChild(line);
+            logLines.push(line);
+            while (logLines.length > MAX_LOG_LINES) {
+                const old = logLines.shift();
+                old.remove();
+            }
+            elLog.scrollTop = elLog.scrollHeight;
+        };
+
+        log('Test harness attached.', 'sys');
+
+        // ---- Integration contract: called by main.js on win ----
+        window.onCaptchaSolved = (token) => {
+            log(`onCaptchaSolved fired. token=${token ? token.slice(0, 12) + '…' : '(empty)'}`, 'win');
+            elToken.textContent = token || '(empty token)';
+            elTokenStatus.textContent = 'Received';
+            elTokenStatus.className = 'tp-value ok';
+        };
+
+        // ---- Helpers ----
+        const api = () => window.__captcha;
+
+        const safeCall = (fn, fallback) => {
+            try {
+                const v = fn();
+                return v === undefined || v === null ? fallback : v;
+            } catch (e) {
+                return fallback;
+            }
+        };
+
+        const copyText = async (text) => {
+            if (!text) return false;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (e) {
+                // fall through to execCommand
+            }
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.top = '-1000px';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        // ---- Buttons ----
+        btnCopy.addEventListener('click', async () => {
+            const token = safeCall(() => api().getToken(), '');
+            if (!token) {
+                log('Copy failed: no token yet.', 'err');
+                return;
+            }
+            const ok = await copyText(token);
+            log(ok ? 'Token copied to clipboard.' : 'Copy failed (clipboard unavailable).', ok ? 'sys' : 'err');
+        });
+
+        btnReload.addEventListener('click', () => {
+            log('Reloading…', 'sys');
+            location.reload();
+        });
+
+        // ---- Polling loop ----
+        let lastSolved = false;
+        let lastCaptured = -1;
+
+        const poll = () => {
+            const a = api();
+            if (!a) {
+                elStatus.textContent = 'Waiting';
+                elStatus.className = 'tp-value pending';
+                return;
+            }
+
+            const captured = safeCall(() => a.getCreaturesCaught(), 0);
+            const solved = safeCall(() => a.getIsCaptchaSolved(), false);
+            const fps = safeCall(() => a.getFps(), null);
+            const quality = safeCall(() => a.getQualityLevel(), null);
+            const token = safeCall(() => a.getToken(), '');
+
+            // Status
+            if (solved) {
+                elStatus.textContent = 'Verified';
+                elStatus.className = 'tp-value ok';
+            } else if (captured > 0) {
+                elStatus.textContent = 'In progress';
+                elStatus.className = 'tp-value pending';
+            } else {
+                elStatus.textContent = 'Waiting';
+                elStatus.className = 'tp-value pending';
+            }
+
+            // Captured
+            elCaptured.textContent = `${captured}/${TOTAL_CREATURES}`;
+            elCaptured.className = `tp-value${captured >= TOTAL_CREATURES ? ' ok' : ''}`;
+
+            // Solved
+            elSolved.textContent = solved ? 'Yes' : 'No';
+            elSolved.className = `tp-value${solved ? ' ok' : ''}`;
+
+            // FPS
+            elFps.textContent = fps === null || fps === undefined ? '—' : String(fps);
+
+            // Quality
+            elQuality.textContent = quality === null || quality === undefined || quality === '' ? '—' : String(quality);
+
+            // Token status (only update if onCaptchaSolved hasn't already shown it)
+            if (token && elTokenStatus.textContent !== 'Received') {
+                elToken.textContent = token;
+                elTokenStatus.textContent = 'Available';
+                elTokenStatus.className = 'tp-value ok';
+            }
+
+            // Edge-triggered log events
+            if (captured !== lastCaptured) {
+                if (lastCaptured !== -1) log(`Creature captured: ${captured}/${TOTAL_CREATURES}`, 'sys');
+                lastCaptured = captured;
+            }
+            if (solved && !lastSolved) {
+                log('CAPTCHA solved via API.', 'win');
+                lastSolved = true;
+            }
+        };
+
+        // Kick off polling. Wait for window.__captcha to appear, then keep ticking.
+        log(`Polling window.__captcha every ${POLL_INTERVAL_MS}ms…`, 'sys');
+        setInterval(poll, POLL_INTERVAL_MS);
+        poll();
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: QA harness (tests/)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: tests/package-lock.json
+
+      - name: Install test dependencies
+        working-directory: tests
+        run: npm ci
+
+      # Only chromium is installed — firefox/webkit are best-effort in this
+      # suite (matrix.mjs skips them with a log line if the binary is
+      # missing), so there's no need to pay for them in CI.
+      - name: Install Playwright (chromium)
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+
+      # The game is buildless (index.html/main.js/src load straight off disk;
+      # three.js resolves from the jsdelivr CDN via the importmap) — serving
+      # the repo root is all "building" it needs. Uses `npx http-server`
+      # rather than tests/README.md's local-dev `python -m http.server`: it
+      # backgrounds/logs more predictably across a long-running multi-page
+      # Playwright session than a bare Python dev server.
+      - name: Serve the repo root
+        run: |
+          npx --yes http-server . -p 8347 -c-1 --silent > /tmp/http-server.log 2>&1 &
+          disown
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8347/index.html > /dev/null && curl -sf http://localhost:8347/test.html > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:8347/index.html > /dev/null
+          curl -sf http://localhost:8347/test.html > /dev/null
+
+      - name: Core assertions (itest)
+        working-directory: tests
+        run: npm run itest
+
+      - name: Accessibility audit (axe)
+        working-directory: tests
+        run: npm run axe
+
+      - name: Perf budget (instances / init-time / fps floor)
+        working-directory: tests
+        run: npm run perfbudget
+
+      # fuzzseed.mjs floors at 25 seeds regardless of any argument
+      # (Math.max(25, ...)) — there's no smaller "CI-fast" mode to ask for.
+      - name: Seed fuzzing (>=25 seeds)
+        working-directory: tests
+        run: npm run fuzzseed
+
+      - name: Visual regression
+        working-directory: tests
+        run: npm run visreg
+
+      - name: Cross-browser + mobile matrix
+        working-directory: tests
+        run: npm run matrix
+
+      - name: Upload visual-regression diffs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visreg-output
+          path: |
+            tests/output/
+            tests/diff/
+          retention-days: 7

@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # tests/ is the only place with a package.json (dev-only QA tooling —
+  # the shipped game itself has zero npm dependencies).
+  - package-ecosystem: "npm"
+    directory: "/tests"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"

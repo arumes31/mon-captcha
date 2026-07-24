@@ -1,0 +1,36 @@
+# ---- Local tooling / assistant config — never shipped ----
+.claude/
+.roo/
+docs/
+graphify-out/
+.clinerules
+.roorules
+CLAUDE.md
+
+# ---- DEV-ONLY test tooling (Phase 4a QA harness) ----
+# The shipped game (index.html, main.js, src/) stays buildless and has NO deps.
+# Everything below is local test tooling and transient output — never shipped.
+node_modules/
+tests/node_modules/
+
+# Transient test output. The committed golden images under tests/baseline/ are
+# the ONLY screenshots kept in git (see the negated rule below).
+tests/output/
+tests/diff/
+tests/shots-out/
+*.log
+
+# Keep the visual-regression baselines (committed golden images).
+!tests/baseline/
+!tests/baseline/**
+
+# ---- OS / editor cruft ----
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ---- Secrets / local env overrides — never shipped ----
+.env
+.env.*
+!.env.example

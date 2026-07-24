@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="A 3D voxel CAPTCHA game — catch the wandering creatures to prove you're human.">
+    <meta name="theme-color" content="#2b1a12">
+    <title>3D Voxel CAPTCHA</title>
+
+    <!-- Import map: resolve bare specifiers 'three' and 'three/addons/' to jsdelivr CDN -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "three/addons/objects/Sky.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Sky.js",
+        "three/addons/objects/Water.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Water.js",
+        "three/addons/postprocessing/EffectComposer.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js",
+        "three/addons/postprocessing/RenderPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js",
+        "three/addons/postprocessing/UnrealBloomPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js",
+        "three/addons/postprocessing/OutputPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js"
+      }
+    }
+    </script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- 3D canvas mounts here -->
+    <div id="captcha-container"></div>
+
+    <!-- Heads-up display overlay (pointer-events disabled; children opt back in) -->
+    <div id="hud">
+        <!-- Top-left HUD column: capture counter + control hints -->
+        <div class="hud-corner">
+            <div id="counter" class="hud-chip">Captured: 0/6</div>
+            <div id="instructions" class="hud-chip">
+                <kbd>WASD</kbd> / <kbd>Arrows</kbd> to move &middot; <kbd>Space</kbd> to jump &middot;
+                <kbd>Ctrl</kbd> to crouch &middot; <kbd>Mouse</kbd> to look &middot; <kbd>Click</kbd> to throw capture balls
+            </div>
+        </div>
+
+        <!-- Center crosshair (CSS-drawn via pseudo-elements) -->
+        <div id="crosshair"></div>
+
+        <!-- Touch controls (mobile): virtual joystick + drag-to-look zone +
+             jump/crouch/throw/pause buttons. Hidden until touch-controls.js
+             detects a coarse (touch) pointer; faded in only while playing. -->
+        <div id="touch-controls">
+            <div id="touch-look-zone" aria-hidden="true"></div>
+            <div id="touch-move-zone" aria-hidden="true">
+                <div id="touch-move-knob"></div>
+            </div>
+            <button id="touch-jump-btn" class="touch-btn" type="button" aria-label="Jump">Jump</button>
+            <button id="touch-crouch-btn" class="touch-btn" type="button" aria-label="Toggle crouch">Crouch</button>
+            <button id="touch-throw-btn" class="touch-btn" type="button" aria-label="Throw capture ball">Throw</button>
+            <button id="touch-pause-btn" class="touch-btn" type="button" aria-label="Pause">&#10074;&#10074;</button>
+        </div>
+
+        <!-- Success modal: shown when enough creatures are captured -->
+        <div id="success-modal">
+            <div class="confetti" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <div id="success-card">
+                <div id="success-check"></div>
+                <h1>Human Verified</h1>
+                <p>You scored 6 capture points. Verification complete.</p>
+                <button id="success-continue" type="button">Continue</button>
+            </div>
+        </div>
+
+        <!-- Click-to-play start overlay (doubles as the pause screen; JS rewrites h1 + first p) -->
+        <div id="click-to-play">
+            <div class="ctp-scene" aria-hidden="true">
+                <span class="sunburst"></span>
+                <span class="voxel v1"></span>
+                <span class="voxel v2"></span>
+                <span class="voxel v3"></span>
+                <span class="voxel v4"></span>
+            </div>
+            <div id="click-to-play-card">
+                <div class="ctp-kicker">3D Voxel CAPTCHA</div>
+                <h1>Click to play</h1>
+                <p>Score 6 capture points to prove you're human &mdash; rarer creatures are worth 2.</p>
+                <p class="hint">Click anywhere to lock your pointer and begin.</p>
+            </div>
+        </div>
+
+        <!-- Pause overlay: shown when pointer unlocks mid-game -->
+        <div id="pause-overlay">
+            <div class="card">
+                <h1>Paused</h1>
+                <p>Click to resume</p>
+            </div>
+        </div>
+
+        <!-- Bottom-center play hint pill -->
+        <div id="play-hint" class="hud-chip">Move with <kbd>WASD</kbd> &middot; <kbd>Space</kbd> to jump &middot; <kbd>Ctrl</kbd> to crouch &middot; <kbd>Click</kbd> to capture</div>
+
+        <!-- Error fallback: shown if WebGL/init fails -->
+        <div id="error-message">
+            <p>This CAPTCHA needs WebGL to run. Please enable hardware acceleration or try a different browser.</p>
+        </div>
+    </div>
+
+    <!-- Inline loading indicator: hidden once main.js initializes -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading 3D CAPTCHA&hellip;</p>
+    </div>
+
+    <!-- Game module -->
+    <script type="module" src="main.js" crossorigin="anonymous"></script>
+</body>
+
+</html>

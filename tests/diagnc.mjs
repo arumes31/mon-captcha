@@ -1,0 +1,13 @@
+﻿import { chromium } from "playwright";
+import { SWIFTSHADER_ARGS } from "./harness.mjs";
+const b = await chromium.launch({ headless: true, args: SWIFTSHADER_ARGS });
+const p = await b.newPage();
+const errs=[];
+p.on("pageerror", e => errs.push("PAGEERROR: "+e.message));
+p.on("console", m => { if(m.type()==="error") errs.push("ERR: "+m.text()); });
+await p.goto("http://localhost:8347/index.html?probe&nochunk&seed=777", { waitUntil:"domcontentloaded", timeout:60000 });
+await p.waitForTimeout(9000);
+const st = await p.evaluate(()=>({ cap: !!window.__captcha, probe: !!window.__probe, err: (document.getElementById("error-message")||{}).textContent }));
+console.log("STATE:", JSON.stringify(st));
+console.log("ERRS:\n"+(errs.join("\n")||"(none)"));
+await b.close();
