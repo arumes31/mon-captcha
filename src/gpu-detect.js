@@ -33,8 +33,11 @@ const SOFTWARE_RENDERER_PATTERNS = [
 ];
 
 // Spins up a throwaway 1x1 canvas + WebGL context purely to read the
-// UNMASKED_RENDERER_WEBGL string, then lets it go — a few ms, never added
-// to the DOM, no relation to the game's real renderer/canvas.
+// UNMASKED_RENDERER_WEBGL string, then lets it go (garbage-collected once
+// this function returns and nothing references it anymore — deliberately
+// NOT explicitly lost via WEBGL_lose_context, since that just makes the
+// browser print its own generic "WebGL context was lost" console line for
+// a context that was never in the DOM or rendered to in the first place).
 export function detectSoftwareRenderer() {
     try {
         if (typeof document === 'undefined') return { isSoftware: false, rendererString: null };
@@ -42,16 +45,24 @@ export function detectSoftwareRenderer() {
         const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
         if (!gl) return { isSoftware: false, rendererString: null };
 
-        const dbgExt = gl.getExtension('WEBGL_debug_renderer_info');
-        const rendererString = dbgExt
-            ? gl.getParameter(dbgExt.UNMASKED_RENDERER_WEBGL)
-            : gl.getParameter(gl.RENDERER);
+        // Firefox deprecated WEBGL_debug_renderer_info (console warning on every
+        // getExtension() call) in favor of exposing the real string via the
+        // plain RENDERER parameter directly — so skip the extension there
+        // entirely. Other browsers (Chromium/WebKit) still mask the plain
+        // parameter to a generic value, so they still need the debug extension.
+        const isFirefox = typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent || '');
+        let rendererString;
+        if (isFirefox) {
+            rendererString = gl.getParameter(gl.RENDERER);
+        } else {
+            const dbgExt = gl.getExtension('WEBGL_debug_renderer_info');
+            rendererString = dbgExt
+                ? gl.getParameter(dbgExt.UNMASKED_RENDERER_WEBGL)
+                : gl.getParameter(gl.RENDERER);
+        }
 
         const isSoftware = typeof rendererString === 'string' &&
             SOFTWARE_RENDERER_PATTERNS.some((re) => re.test(rendererString));
-
-        const loseExt = gl.getExtension('WEBGL_lose_context');
-        if (loseExt) loseExt.loseContext();
 
         return { isSoftware, rendererString: rendererString || null };
     } catch (e) {

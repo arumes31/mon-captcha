@@ -77,9 +77,10 @@ export function buildEngine(container) {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.08; // bright but not blown golden-hour exposure
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    if ('useLegacyLights' in renderer) {
-        renderer.useLegacyLights = false; // ensure next-gen physical lighting is active
-    }
+    // No useLegacyLights toggle needed: three@0.160.0 already defaults to
+    // physically-correct lighting (legacy mode was removed as the default in
+    // r155), and the property itself is deprecated for removal — setting it
+    // was a no-op that only printed a console deprecation warning.
     state.scene = scene;
     state.camera = camera;
     state.renderer = renderer;
