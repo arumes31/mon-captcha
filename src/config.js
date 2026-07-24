@@ -197,4 +197,11 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ---- HUD/UI polish & accessibility (backlog items 403-436) ----
+    // World-unit radius within which the off-screen legendary-creature HUD
+    // indicator (item 416) activates — same order of magnitude as
+    // SHADOW_FOLLOW_RADIUS/CAPTURE_RANGE above, tuned so it reads as "nearby"
+    // rather than arena-wide.
+    LEGENDARY_RADAR_RANGE: 45,
 };
