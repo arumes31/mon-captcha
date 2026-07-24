@@ -148,6 +148,44 @@ export function makeFlashSprite(color, scale) {
     return s;
 }
 
+/* ------------------------------------------------------------
+   Flight-blur helpers (items 247/343) — a linear motion streak and
+   a rotational spin-blur disc, both unshared-material (the caller
+   animates opacity/orientation per-ball and MUST dispose the
+   material when the ball's flight ends), on a shared geometry —
+   same contract as makeFlashSprite above.
+   ------------------------------------------------------------ */
+let streakGeo = null;
+function getStreakGeo() {
+    if (!streakGeo) streakGeo = new THREE.BoxGeometry(1, 1, 1);
+    return streakGeo;
+}
+let spinRingGeo = null;
+function getSpinRingGeo() {
+    if (!spinRingGeo) spinRingGeo = new THREE.RingGeometry(0.5, 1, 20);
+    return spinRingGeo;
+}
+
+// Elongated additive streak trailing a fast-flying ball — oriented and scaled
+// per-frame by the caller (projectiles.js) along the current velocity vector.
+export function makeBallStreak(color = 0xffcf8a) {
+    const mat = new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: 0.45, depthWrite: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    return new THREE.Mesh(getStreakGeo(), mat);
+}
+
+// Faint disc perpendicular to the tumble axis — reads as rotational blur,
+// distinct from the linear streak above (item 343).
+export function makeSpinBlurRing(color = 0xfff3d0) {
+    const mat = new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity: CONFIG.BALL_SPIN_RING_OPACITY, depthWrite: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    return new THREE.Mesh(getSpinRingGeo(), mat);
+}
+
 // Balls share cached geo/materials — removing one never disposes anything
 export function removeBall(group) {
     if (group && group.parent) group.parent.remove(group);
@@ -161,4 +199,6 @@ export function disposeBallCaches() {
     ballMatCache.clear();
     if (glowSpriteMat) { try { glowSpriteMat.dispose(); } catch (e) {} glowSpriteMat = null; }
     if (glowTexture) { try { glowTexture.dispose(); } catch (e) {} glowTexture = null; }
+    if (streakGeo) { try { streakGeo.dispose(); } catch (e) {} streakGeo = null; }
+    if (spinRingGeo) { try { spinRingGeo.dispose(); } catch (e) {} spinRingGeo = null; }
 }

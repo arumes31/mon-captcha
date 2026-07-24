@@ -197,4 +197,51 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ---- VFX backlog additions (items 243-268, 327-354; see
+    // temp/world-graphics-improvements.md) ----
+
+    // Particle pool — tiered budget (item 264): initParticlePool() picks a
+    // size from these before quality.js has run its first sample (the
+    // software-renderer probe is already known by then), and the pool
+    // lazily resizes itself if state.qualityLevel changes later (the FPS
+    // auto-scaler stepping the tier up/down).
+    PARTICLE_POOL_HIGH: 320,
+    PARTICLE_POOL_MEDIUM: 200,
+    PARTICLE_POOL_LOW: 110,
+    // Particle LOD (item 250): bursts/motes thin out with distance from camera.
+    PARTICLE_LOD_NEAR: 20,          // full density inside this radius
+    PARTICLE_LOD_FAR: 55,           // thinned to PARTICLE_LOD_MIN_FRACTION beyond this
+    PARTICLE_LOD_MIN_FRACTION: 0.35,
+    // Ground/impact decal (item 352) — reuses the water-ripple ring geometry.
+    DECAL_LIFE: 2.2,
+
+    // Ball flight VFX (items 247/338/343/344/347/351/354)
+    BALL_STREAK_LEN_MUL: 0.9,        // motion-blur streak length per unit speed
+    BALL_STREAK_WIDTH_MUL: 0.55,     // streak width, relative to BALL_RADIUS
+    BALL_SPIN_RING_OPACITY: 0.3,
+    BALL_TRAIL_WARN_FRACTION: 0.22,  // last fraction of BALL_DESPAWN_TIME the trail reddens
+    BALL_PROXIMITY_TRAIL_BOOST: 1.6, // extra trail density near a hovered target
+    RICOCHET_SPARK_BASE: 10,         // spark count at full energy, scaled by restitution
+    WHIFF_RADIUS_MUL: 1.6,           // catchRadius multiplier for a "close whiff" grace zone
+    WHIFF_SPARK_COUNT: 5,
+    RICOCHET_SHAKE_MAG: 0.028,       // radians of camera roll on a maxed-out bounce chain
+    RICOCHET_SHAKE_TIME: 0.3,
+
+    // Viewmodel & player VFX (items 328-342)
+    VM_CHARGE_GLOW_MAX: 0.85,
+    VM_HOLSTER_GLOW_MAX: 0.4,
+    BREATH_FOG_INTERVAL: 2.6,        // seconds between breath puffs in cold zones
+    VIEW_BOB_FREQ_BASE: 9.0,         // rad/s at a standstill-adjacent walk
+    VIEW_BOB_FREQ_SPEED: 7.0,        // extra rad/s at PLAYER_MAX_SPEED
+    VIEW_BOB_AMPLITUDE: 0.028,       // world units of vertical camera bob at full tilt
+    LANDING_FALL_MIN_SPEED: 4.5,     // minimum touchdown vy to spawn landing dust
+    FOOTSTEP_STRIDE_LEN: 2.1,        // world units per footfall (surface dust/splash)
+    FOOTSTEP_SPRINT_FRACTION: 0.72,  // fraction of PLAYER_MAX_SPEED counted as "sprinting"
+    WADE_OVERLAY_FADE_TIME: 1.8,
+
+    // Targeting VFX (items 345/348/349/350)
+    RING_COLOR_EASE: 6.0,            // per-second smoothing rate for the ring's chance-color lerp
+    TRAJECTORY_GHOST_STEPS: 22,
+    TRAJECTORY_GHOST_DT: 0.045,
 };
