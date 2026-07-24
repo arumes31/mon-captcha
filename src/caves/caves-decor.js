@@ -25,8 +25,16 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { state } from '../state.js';
-import { spawnParticleBurst } from '../particles.js';
+import { spawnParticleBurst, spawnFxRing } from '../particles.js';
 import { playCrystalChime, playSingingCrystal, playSporePoof } from '../audio.js';
+// NOTE (item 461): a music.js import was tried here for a beat-synced crystal
+// shimmer, but this module sits on heightfield.js's OWN evaluation path
+// (heightfield.js -> caves-data.js -> caves-water.js -> caves-decor.js for
+// pushAux), and music.js imports zones/zones.js -> heightfield.js — a real
+// circular import that threw "Cannot access 'PARTITION' before initialization"
+// (heightfield.js's PARTITION export, read by zones.js, wasn't assigned yet).
+// Reverted here; the cloud-side half of item 461 lives safely in atmosphere.js
+// instead (that module is never on heightfield.js's own load path).
 
 export const V = CONFIG.VOXEL_SIZE;
 export const SC = 1 / V;                 // world units -> sharedBoxGeo instance scale
@@ -249,6 +257,13 @@ export function updateDecor(u) {
                         playCrystalChime(cp.pick);
                         d.flash = 1; d.chimeCd = 0.12;
                         spawnParticleBurst(cp.x, cp.y, cp.z, cp.spark, 5);
+                        // item 473: an actual expanding ripple-ring, precisely on
+                        // playCrystalChime's onset — distinct from the general
+                        // emissiveIntensity glow pulse (d.flash) above.
+                        spawnFxRing(cp.x, cp.y, cp.z, cp.spark, {
+                            fromScale: 0.2, toScale: CONFIG.CRYSTAL_CHIME_RIPPLE_SCALE,
+                            life: CONFIG.CRYSTAL_CHIME_RIPPLE_LIFE, opacity: 0.55,
+                        });
                         // a ball-struck singing crystal starts its own colour-cycle
                         // (item 145) and lights up the whole cluster (item 153)
                         if (cp.singing) { cp.singing.cycle = 1.0; d.showPulse = 1.0; }

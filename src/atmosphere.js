@@ -14,6 +14,7 @@ import { getTerrainHeight, findDryLand, sampleCave } from './heightfield.js';
 import { chunkSetMatrix, chunkFlushDirty } from './culling.js';
 import { spawnWaterRipple } from './particles.js';
 import { buildCloudShadows, updateCloudShadows, buildGroundDecals, updateGroundDecals, buildPoiDetails, updatePoiDetails } from './atmosphere-fx.js';
+import { musicBeatPhase } from './music.js';
 
 // Cave interiors get no outdoor ambience (snow/pollen indoors reads wrong);
 // the caves module owns its own drip motes.
@@ -586,6 +587,12 @@ export function updateEnvironmentAnim(elapsed) {
     if (state.cloudLayers) {
         const dark = state.weatherCloudDark || 0;
         const flash = state.weatherFlash || 0;
+        // item 461: a small nudge toward the active music mood's own
+        // pad-breathing rate, so slow cloud drift reads as loosely "in time"
+        // with the ambient score — the drift itself (position) is untouched;
+        // only the opacity gets the subtle pulse, kept well under the
+        // dark/flash terms below so it never reads as a hard strobe.
+        const beat = musicBeatPhase() * CONFIG.MUSIC_BEAT_VISUAL_MIX * 0.4;
         for (const layer of state.cloudLayers) {
             layer.mesh.position.x = Math.sin(elapsed * layer.driftSpeed + layer.phase) * layer.driftAmp;
             layer.mesh.position.z = Math.cos(elapsed * layer.driftSpeed * 0.7 + layer.phase) * layer.driftAmp * 0.4;
@@ -593,7 +600,7 @@ export function updateEnvironmentAnim(elapsed) {
             if (state.scene.fog) _cloudTint.lerp(state.scene.fog.color, Math.min(0.7, dark * 0.8));
             if (flash > 0.05) _cloudTint.lerp(_cA_FLASH, Math.min(0.5, flash));
             layer.mesh.material.color.copy(_cloudTint);
-            layer.mesh.material.opacity = layer.baseOpacity * (1 - dark * 0.25);
+            layer.mesh.material.opacity = layer.baseOpacity * (1 - dark * 0.25) * (1 + beat);
         }
         updateCloudShadows();
     }

@@ -21,7 +21,7 @@ import { CONFIG } from './config.js';
 import { state } from './state.js';
 import { getGroundY, isWaterAt, getWaterLevelAt, findDryLand, caveAt } from './heightfield.js';
 import { spawnParticleBurst, spawnTrailMote, spawnWaterRipple } from './particles.js';
-import { playPop, playThump, playSplash, playWobbleTick, playSuccessChime, playBreakout } from './audio.js';
+import { playPop, playThump, playSplash, playWobbleTick, playSuccessChime, playBreakout, playLegendarySting } from './audio.js';
 import { stopMusic } from './music.js';
 import { stopCaveAudio } from './caves/caves-audio.js';
 import { foldCapture, validateCaptureHash, generateToken } from './security.js';
@@ -32,6 +32,15 @@ import { caveCaptureBonus, maybeCollapse } from './caves/caves-gameplay.js';
 const DUST = 0xcaa87a;              // sandy puff for ground wobbles
 const GOLD = 0xffd75e;              // success stars
 const scratch = new THREE.Vector3();
+
+// item 478: splash-ring size scales with the CAUGHT creature's tier — a stand-in
+// for "what fell in"'s weight (a bare ball settling reads small; a legendary
+// settles with a noticeably bigger ring) rather than every water-landing using
+// the same fixed ring size regardless of what's actually inside the ball.
+const SPLASH_WEIGHT_BY_TIER = { common: 1, uncommon: 1.35, rare: 1.75, legendary: CONFIG.SPLASH_RING_WEIGHT_MAX };
+function splashWeightMul(creature) {
+    return (creature && SPLASH_WEIGHT_BY_TIER[creature.def.tier]) || 1;
+}
 
 /* ------------------------------------------------------------
    Entry point — called by projectiles.js when a ball connects.
@@ -88,7 +97,12 @@ export function beginCatchSequence(creature, index, dist, backHit, ball, impactV
    ------------------------------------------------------------ */
 export function updateCaptureSequences(dt) {
     updateFlashes(dt);
-    if (state.captureSeqs.length === 0) return;
+    // item 480 support: decay the post-breakout "tense" window (weather.js
+    // reads state.breakoutTenseT for its color-grade nudge) — unconditional so
+    // it still counts down after the last sequence finishes.
+    if (state.breakoutTenseT > 0) state.breakoutTenseT = Math.max(0, state.breakoutTenseT - dt);
+
+    if (state.captureSeqs.length === 0) { updateFovFx(dt); return; }
 
     for (const seq of state.captureSeqs) {
         if (seq.done) continue;
@@ -103,6 +117,62 @@ export function updateCaptureSequences(dt) {
         }
     }
     state.captureSeqs = state.captureSeqs.filter(s => !s.done);
+    updateFovFx(dt); // items 464/475 — reads this frame's just-updated phase/t
+}
+
+/* ------------------------------------------------------------
+   Items 464/475 — a tiny shared FOV-fx layer (state.camera.fov, NOT
+   camera-shake.js's rotation.z bus, so the two never fight):
+     464  a brief FOV "punch" (kicks wider, eases back) on a legendary
+          capture success, paired with playLegendarySting() reused
+          here as the capture-success flourish (previously a
+          proximity-only cue) alongside the existing playSuccessChime().
+     475  a subtle FOV "pull" (narrows toward the ball) eased across
+          the suck-in phase — peaks mid-suck, released by the time the
+          creature is fully absorbed — synced to the connect-frame
+          playPop() that marks the suck's onset in beginCatchSequence.
+   Both sum onto ONE captured base FOV so a punch mid-suck (e.g. a
+   second ball connecting on a legendary right as another wraps up)
+   still resolves sanely instead of two absolute writes fighting.
+   ------------------------------------------------------------ */
+let fovBase = null;
+let fovPunchT = -1, fovPunchMag = 0, fovPunchDur = 0;
+
+function triggerFovPunch(mag, dur) {
+    fovPunchMag = mag;
+    fovPunchDur = dur;
+    fovPunchT = 0;
+}
+
+function updateFovFx(dt) {
+    const cam = state.camera;
+    if (!cam) return;
+    if (fovBase === null) fovBase = cam.fov;
+
+    // item 475: peaks mid-suck (sin(k*PI)) and returns to 0 at both ends, so
+    // the whole pull arc lives inside CATCH_SUCK_TIME.
+    let suckPull = 0;
+    for (const seq of state.captureSeqs) {
+        if (seq.done || seq.phase !== 'suck') continue;
+        const k = Math.min(1, seq.t / CONFIG.CATCH_SUCK_TIME);
+        const pull = Math.sin(k * Math.PI);
+        if (pull > suckPull) suckPull = pull;
+    }
+
+    // item 464: quick-out, eased-back punch.
+    let punch = 0;
+    if (fovPunchT >= 0) {
+        fovPunchT += dt;
+        const k = Math.min(1, fovPunchT / fovPunchDur);
+        punch = fovPunchMag * (1 - k) * (1 - k);
+        if (k >= 1) fovPunchT = -1;
+    }
+
+    const targetFov = fovBase - suckPull * CONFIG.CATCH_SUCK_FOV_PULL + punch;
+    if (Math.abs(cam.fov - targetFov) > 0.0005) {
+        cam.fov = targetFov;
+        cam.updateProjectionMatrix();
+    }
 }
 
 /* ---- phase: suck — shrink + spiral + stretch into the ball ---- */
@@ -166,7 +236,8 @@ function updateFall(seq, dt) {
             // plops onto the water and floats — ripples instead of dust
             ball.position.y = restY;
             seq.vel.set(0, 0, 0);
-            spawnWaterRipple(ball.position.x, ball.position.z, getWaterLevelAt(ball.position.x, ball.position.z));
+            // item 478: ring size scales with the caught creature's tier
+            spawnWaterRipple(ball.position.x, ball.position.z, getWaterLevelAt(ball.position.x, ball.position.z), splashWeightMul(seq.c));
             playSplash();
             toSettle(seq);
         } else if (seq.bounces < 1 && Math.abs(seq.vel.y) > 2.4) {
@@ -225,8 +296,12 @@ function updateWobble(seq, dt) {
         seq.wobbleAnimT = 0;
         seq.wobbleDir = seq.wobbles % 2 === 0 ? -1 : 1;
         playWobbleTick();
+        // item 476: a small pulse-flash exactly on the tick, additional to the
+        // already frame-exact rock/squash (seq.wobbleAnimT, below) + dust/ripple.
+        spawnFlash(ball.position.x, ball.position.y, ball.position.z, 0xfff6dd, 0.15, 0.55, CONFIG.WOBBLE_TICK_FLASH_LIFE);
         if (isWaterAt(ball.position.x, ball.position.z)) {
-            spawnWaterRipple(ball.position.x, ball.position.z, getWaterLevelAt(ball.position.x, ball.position.z));
+            // item 478: ring size scales with the caught creature's tier
+            spawnWaterRipple(ball.position.x, ball.position.z, getWaterLevelAt(ball.position.x, ball.position.z), splashWeightMul(seq.c));
         } else {
             spawnParticleBurst(ball.position.x, ball.position.y - CONFIG.BALL_RADIUS * 0.4, ball.position.z, DUST, 4);
         }
@@ -258,6 +333,13 @@ function startSuccess(seq) {
     const c = seq.c;
     const ball = seq.ball;
     playSuccessChime();
+    // item 464: legendary captures get a camera-punch FOV kick, matched to
+    // playLegendarySting() reused here as the capture-success flourish
+    // (previously only a proximity-approach cue) alongside the chime above.
+    if (c.def.tier === 'legendary') {
+        playLegendarySting();
+        triggerFovPunch(CONFIG.LEGENDARY_CAPTURE_FOV_PUNCH, CONFIG.LEGENDARY_CAPTURE_FOV_TIME);
+    }
     spawnFlash(ball.position.x, ball.position.y, ball.position.z, GOLD, 0.5, 2.3, 0.32);
     spawnFlash(ball.position.x, ball.position.y + 0.1, ball.position.z, 0xfff6dd, 0.2, 1.0, 0.18);
     spawnParticleBurst(ball.position.x, ball.position.y + 0.15, ball.position.z, GOLD, 28);
@@ -310,6 +392,12 @@ function startBreakout(seq) {
     const c = seq.c;
     const ball = seq.ball;
     playBreakout();
+    // item 480 support: a fresh breakout pushes weather.js's mood color-grade
+    // toward "tense/cool" for a few seconds (state.breakoutTenseT, decayed in
+    // updateCaptureSequences above) — the closest concrete "chase" gameplay
+    // signal this project has to react to, since the music mood itself is
+    // purely zone/cave-driven and never reacts to gameplay events on its own.
+    state.breakoutTenseT = CONFIG.BREAKOUT_TENSE_TIME;
     spawnFlash(ball.position.x, ball.position.y, ball.position.z, 0xffffff, 0.4, 1.6, 0.2);
     spawnParticleBurst(ball.position.x, ball.position.y, ball.position.z, c.def.particle, 18);
     spawnParticleBurst(ball.position.x, ball.position.y, ball.position.z, 0xffe9c6, 8);
@@ -433,4 +521,15 @@ export function disposeCaptureSequences() {
         try { f.sprite.material.dispose(); } catch (e) {}
     }
     state.captureFlashes = [];
+    // items 464/475: restore the camera to its captured base FOV (the camera
+    // itself is rebuilt fresh on the next init anyway, but this leaves nothing
+    // mid-punch/pull if destroy() lands mid-effect) and reset the FOV-fx state
+    // so the next session recaptures a fresh base rather than reusing a stale one.
+    if (state.camera && fovBase !== null) {
+        state.camera.fov = fovBase;
+        state.camera.updateProjectionMatrix();
+    }
+    fovBase = null;
+    fovPunchT = -1; fovPunchMag = 0; fovPunchDur = 0;
+    state.breakoutTenseT = 0;
 }

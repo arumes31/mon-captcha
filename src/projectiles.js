@@ -46,6 +46,7 @@ import { beginCatchSequence } from './capture.js';
 import { showBackBonusFlourish } from './targeting.js';
 import { caveRicochet, caveThrowUpAngle, tunnelBackDot, caveCaptureBonus } from './caves/caves-gameplay.js';
 import { zoneAt } from './zones/zones.js';
+import { triggerScreenShake, updateScreenShake } from './camera-shake.js';
 
 // Scratch objects — reused every frame so streak/ring orientation never allocates.
 const _unitZ = new THREE.Vector3(0, 0, 1);
@@ -139,68 +140,6 @@ function disposeProjectileFx(p) {
         try { p.ring.material.dispose(); } catch (e) {}
         p.ring = null;
     }
-}
-
-/* ------------------------------------------------------------
-   Item 353 — subtle screen-shake on a big ricochet chain.
-
-   BUG FIX: this used to set camera.rotation.z directly, then decay it
-   back down every frame via `if (cam.rotation.z !== 0) cam.rotation.z *=
-   decay`. Two compounding mistakes:
-     1. camera.rotation reads in THREE's default 'XYZ' Euler order, but
-        PointerLockControls composes/decomposes look in 'YXZ' order. The
-        SAME pure yaw+pitch orientation generically decomposes to a
-        nonzero .rotation.z under XYZ order even with zero actual roll —
-        so that `!== 0` decay branch was true, and running, on nearly
-        every frame the player had ever looked around at all, not just
-        after a ricochet.
-     2. Directly overwriting .rotation.z (one component of an XYZ-order
-        Euler) while x/y stay put does NOT isolate "roll" — three.js
-        recomposes the quaternion from the new (x, y, shrunk-z) triple,
-        subtly warping the actual look direction. PointerLockControls'
-        NEXT mousemove then decomposes that already-warped quaternion
-        back into ITS OWN YXZ order via `_euler.setFromQuaternion(...)`
-        — the more frequently mousemove fires (i.e. the faster the mouse
-        moves), the more often this warp-then-redecompose cycle runs,
-        which is exactly why it got worse with faster mouse movement and
-        could visibly flip the view ("camera stands on its head").
-   Confirmed against the actual pinned three@0.160.0 source, and verified
-   the fix holds under a simulated fast-mouse-movement burst (pitch
-   clamps cleanly, camera.up never inverts).
-
-   Fix: apply the shake as a CSS `rotate()` on the canvas ELEMENT
-   instead of the WebGL camera. It's a pure screen-space overlay the
-   renderer/camera/controls never see, so it can't get tangled into
-   mouse-look math at all. Any future screen-shake should use this same
-   pattern rather than touching camera.rotation directly.
-   ------------------------------------------------------------ */
-let shakeMag = 0, shakeDur = 0, shakeT = 0, shakeAngle = 0;
-function triggerScreenShake(mag, dur) {
-    shakeMag = Math.max(shakeMag, mag);
-    shakeDur = dur;
-    shakeT = 0;
-}
-function updateScreenShake(dt) {
-    const canvas = state.renderer && state.renderer.domElement;
-    if (!canvas) return;
-    if (shakeDur <= 0) {
-        if (shakeAngle !== 0) {
-            shakeAngle *= Math.max(0, 1 - dt * 10);
-            if (Math.abs(shakeAngle) < 0.0001) shakeAngle = 0;
-            canvas.style.transform = shakeAngle === 0 ? '' : `rotate(${shakeAngle}rad)`;
-        }
-        return;
-    }
-    shakeT += dt;
-    if (shakeT >= shakeDur) {
-        shakeDur = 0;
-        shakeAngle = 0;
-        canvas.style.transform = '';
-        return;
-    }
-    const k = 1 - shakeT / shakeDur;
-    shakeAngle = Math.sin(shakeT * 53) * shakeMag * k;
-    canvas.style.transform = `rotate(${shakeAngle}rad)`;
 }
 
 // items 248/262/352 — surface read at a ground-miss point: snow/ice zones puff

@@ -19,6 +19,8 @@ import { creatureLod } from '../lod.js';
 import { updateDodge, coverHeading, keepDistance, alarmFrom, updateLegendaryPresence } from './smart.js';
 import { updateCaveCreature } from './cave-behavior.js';
 import { zoneAt } from '../zones/zones.js';
+import { playThump } from '../audio.js';
+import { triggerScreenShake } from '../camera-shake.js';
 
 // Is the player camera looking (roughly) at this creature?
 function playerLookingAt(c) {
@@ -521,6 +523,28 @@ export function updateCreatures(dt, elapsed) {
         // legendary presence: aura motes, size pulse, proximity sting
         if (def.tier === 'legendary') {
             updateLegendaryPresence(c, dt, elapsed, playerPos);
+        }
+
+        // item 477: magmaGolem/crystalGolem footfalls get a distinct LOW-
+        // frequency screen-shake + a reused "thump" cue (playThump already
+        // exists as this game's generic impact thump — no new audio
+        // synthesized) to sell their weight. A footfall is detected as a
+        // zero-crossing of the exact same leg-sway sine animate.js's 'golem'
+        // case already drives (walkT below matches it), so no new per-creature
+        // gait state is needed beyond one remembered sign.
+        if (def.plan === 'golem' && mul > 0.15 && !frozen) {
+            const walkT = elapsed * (3 + def.speed * 5) + c.phase;
+            const sw = Math.sin(walkT);
+            if (c._golemSwPrev !== undefined && (c._golemSwPrev < 0) !== (sw < 0)) {
+                const distSq = playerPos ? p.distanceToSquared(playerPos) : Infinity;
+                if (distSq < CONFIG.GOLEM_STOMP_RANGE * CONFIG.GOLEM_STOMP_RANGE) {
+                    const near = 1 - Math.sqrt(distSq) / CONFIG.GOLEM_STOMP_RANGE;
+                    playThump();
+                    if (state.qualityLevel !== 'low') spawnParticleBurst(p.x, p.y + 0.02, p.z, def.particle, 4, 0x2c2a26);
+                    triggerScreenShake(CONFIG.GOLEM_STOMP_SHAKE_MAG * near, CONFIG.GOLEM_STOMP_SHAKE_TIME, CONFIG.GOLEM_STOMP_SHAKE_FREQ);
+                }
+            }
+            c._golemSwPrev = sw;
         }
     }
 }

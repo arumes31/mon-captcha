@@ -433,4 +433,117 @@ export const CONFIG = {
     SEED_THUMBNAIL_MAX_DIM: 256,     // item 399: max width/height (px) for the offline seed-preview thumbnail capture (foundation only)
     CLOUD_STREAK_BIAS_STRENGTH: 0.22, // item 400: how far a seed shifts the streaky-vs-puffy cloud-cluster profile threshold, beyond density-only variety
     FLORA_SPECIES_MIX_JITTER: 0.5,   // item 401: max per-seed, per-zone-per-species weight skew within a zone's existing allowed tree table
+
+    // ============================================================
+    // Audio-Visual Sync & Juice pass (world-graphics-improvements.md
+    // Section 29, items 461-480). See src/camera-shake.js (new shared
+    // screen-shake bus), music.js (beat/duck/mood-warmth getters),
+    // capture.js (FOV punch/pull), particles.js (spawnFxRing), and the
+    // per-file "item NNN" comments at each point of use. Appended block;
+    // nothing above this line was touched for this pass.
+    // ============================================================
+
+    // item 461: how much the active mood's own pad-breathing LFO rate
+    // (music.js's musicBeatPhase()) blends into otherwise-independent slow
+    // ambient pulses (cave crystal shimmer, cloud opacity) for cohesion —
+    // deliberately small; this is a "reads as related" nudge, not a hard sync.
+    MUSIC_BEAT_VISUAL_MIX: 0.15,
+
+    // item 462: thunderclap screen-shake, scaled by strike proximity (shares
+    // src/camera-shake.js's bus with the existing item-353 ricochet shake and
+    // the item-467 rock-rumble / item-477 golem-stomp shakes below). Strikes
+    // rolled farther than the cutoff don't shake at all — only a genuinely
+    // "nearby" clap should rattle the camera.
+    THUNDER_SHAKE_MAG: 0.05,
+    THUNDER_SHAKE_TIME: 0.5,
+    THUNDER_SHAKE_FAR_CUTOFF: 0.55,
+
+    // item 479: flash->thunder delay (ms), retuned so a genuinely CLOSE strike
+    // reads as one frame-accurate event instead of the old flat 300ms floor
+    // (audibly late even at "far=0"). MIN is a couple of frames — near-instant;
+    // SPAN is added on top, scaled by strike distance (far, 0..1), preserving
+    // the old far-strike ceiling (~2.5s).
+    THUNDER_DELAY_MIN_MS: 40,
+    THUNDER_DELAY_SPAN_MS: 2460,
+
+    // item 463: small paired visual bursts for two audio cues that previously
+    // had none of their own (only a behavior/movement change) — a bright
+    // "alert" flash at the caller for playAlarmChirp, and a flutter-puff per
+    // scattering bat for playBatScatter.
+    ALARM_CHIRP_BURST_COUNT: 6,
+    BAT_SCATTER_BURST_COUNT: 5,
+
+    // item 465: stride length (world units) SHARED between caves-audio.js's
+    // footstep SOUND cadence and player.js's footstep DUST cadence while in a
+    // cave — both accumulate the identical state.player.velocity.length()*dt
+    // each frame, so unifying this one constant (they previously used 1.7 vs
+    // FOOTSTEP_STRIDE_LEN's 2.1) locks the two onto the same trigger frame
+    // instead of slowly drifting in and out of phase.
+    CAVE_FOOTSTEP_STRIDE_LEN: 1.7,
+
+    // item 466: expanding "sonar ping" ring synced to playEchoCall's onset
+    // (cave echo-locator creatures) — a second flavor of particles.js's
+    // spawnFxRing, distinct from the existing burst-of-motes visual.
+    ECHO_RIPPLE_LIFE: 0.5,
+    ECHO_RIPPLE_MAX_SCALE: 3.4,
+
+    // item 467: rock-collapse screen-shake, paired with the existing
+    // falling-rock + dust + playRockRumble() drama in caves-gameplay.js
+    // (which already fires all of those in one synchronous call — this was
+    // the one missing beat).
+    ROCK_RUMBLE_SHAKE_MAG: 0.022,
+    ROCK_RUMBLE_SHAKE_TIME: 0.6,
+
+    // item 464: FOV kick on a legendary capture success — paired with
+    // playLegendarySting() (previously only a proximity cue) reused here as
+    // the capture-success flourish alongside the existing playSuccessChime().
+    LEGENDARY_CAPTURE_FOV_PUNCH: 6,   // degrees, decays back to base
+    LEGENDARY_CAPTURE_FOV_TIME: 0.5,
+
+    // item 475: FOV narrowing (lens-pull toward the ball) eased across the
+    // capture suck-in phase, peaking mid-suck and releasing by CATCH_SUCK_TIME
+    // — see capture.js's updateFovFx.
+    CATCH_SUCK_FOV_PULL: 2.5,         // degrees
+
+    // item 476: a small pulse-flash paired with each playWobbleTick hit,
+    // additional to the already frame-exact rock/squash + dust/ripple.
+    WOBBLE_TICK_FLASH_LIFE: 0.16,
+
+    // item 477: distinct LOW-frequency screen-shake for magmaGolem/
+    // crystalGolem footfalls (detected as a zero-crossing of the existing
+    // per-frame leg-sway sine in animate.js's 'golem' case) — reuses
+    // playThump() (audio.js's existing generic impact thump) rather than
+    // synthesizing new audio, paired with a per-species dust puff. Only cues
+    // for a golem within GOLEM_STOMP_RANGE of the camera.
+    GOLEM_STOMP_SHAKE_MAG: 0.02,
+    GOLEM_STOMP_SHAKE_TIME: 0.28,
+    GOLEM_STOMP_SHAKE_FREQ: 17,        // rad/s — well below camera-shake.js's 53 default: reads as a heavy thud, not a rattle
+    GOLEM_STOMP_RANGE: 30,
+
+    // item 478: splash-ring size multiplier ceiling — a capture ball settling
+    // into water sizes its ripple by the CAUGHT creature's tier (a stand-in
+    // for "what fell in" weight: common ~1x up to a legendary at this ceiling)
+    // instead of every splash using the same fixed ring size regardless of
+    // what's inside the ball.
+    SPLASH_RING_WEIGHT_MAX: 2.6,
+
+    // item 471: brief exposure/hemi dip ("the world holds its breath") while
+    // music.js's crossfadeTo() is actively blending to a new mood — a short
+    // attack into the dip, a longer release back out across the crossfade.
+    MUSIC_DUCK_VISUAL_DIP: 0.05,
+    MUSIC_DUCK_ATTACK: 0.18,
+    MUSIC_DUCK_RELEASE: 1.6,
+
+    // item 480: subtle global color-grade nudge from the active music mood's
+    // warmth (musicMoodWarmth() in music.js) plus a cooler push while a
+    // breakout's adrenaline is fresh (state.breakoutTenseT, set by capture.js).
+    // Deliberately small — a mood tint, not a filter.
+    MOOD_COLOR_GRADE_STRENGTH: 0.05,
+    BREAKOUT_TENSE_TIME: 4.0,
+
+    // item 473: crystal-chime ripple-ring, precisely time-locked to
+    // playCrystalChime's onset (caves-decor.js's ball-strike chime handler),
+    // distinct from the existing general shimmer/flash glow pulse.
+    CRYSTAL_CHIME_RIPPLE_LIFE: 0.4,
+    CRYSTAL_CHIME_RIPPLE_SCALE: 1.6,
 };

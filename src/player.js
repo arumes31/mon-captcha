@@ -239,12 +239,22 @@ export function updatePlayer(dt) {
     // beneath the player, denser (and kicked up a touch behind the player)
     // while sprinting. A stride accumulator, same technique caves-audio.js
     // already uses for footstep SOUND cadence, just driving VFX instead.
+    // item 465: inside a cave, use the SAME stride length caves-audio.js's
+    // footstep SOUND cadence uses (CONFIG.CAVE_FOOTSTEP_STRIDE_LEN) instead of
+    // this file's own FOOTSTEP_STRIDE_LEN — both accumulators add the identical
+    // state.player.velocity.length()*dt each frame and reset the same way
+    // (subtract the stride length, keep the remainder), so once the stride
+    // length agrees too the dust and the footfall sound land on the same
+    // frame instead of slowly drifting in and out of phase over a long walk.
+    // Outdoors there's no footstep AUDIO cue at all to sync to, so the
+    // surface cadence is untouched.
     if (p.grounded && !crouching && state.qualityLevel !== 'low') {
         const moveSpeed = v.length();
+        const strideLen = p.inCave ? CONFIG.CAVE_FOOTSTEP_STRIDE_LEN : CONFIG.FOOTSTEP_STRIDE_LEN;
         if (moveSpeed > 0.15) {
             p.footAcc += moveSpeed * dt;
-            if (p.footAcc >= CONFIG.FOOTSTEP_STRIDE_LEN) {
-                p.footAcc -= CONFIG.FOOTSTEP_STRIDE_LEN;
+            if (p.footAcc >= strideLen) {
+                p.footAcc -= strideLen;
                 const sprinting = moveSpeed > CONFIG.PLAYER_MAX_SPEED * CONFIG.FOOTSTEP_SPRINT_FRACTION;
                 const kickBack = sprinting ? 0.35 : 0.12;
                 const fx = pos.x - reuse.moveDir.x * kickBack;
@@ -256,7 +266,7 @@ export function updatePlayer(dt) {
                 }
             }
         } else {
-            p.footAcc = Math.min(p.footAcc, CONFIG.FOOTSTEP_STRIDE_LEN * 0.5);
+            p.footAcc = Math.min(p.footAcc, strideLen * 0.5);
         }
     }
 
