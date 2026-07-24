@@ -197,4 +197,19 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ------------------------------------------------------------
+    // Zones — Biome Identity pass (backlog items 215-230). See
+    // src/zones/zones-data.js (ZONE_DEFS fields) and src/zones/zones.js
+    // (blended/hard lookups) for how these are consumed.
+    // ------------------------------------------------------------
+    // item 222: zoneBlendAt's border weight t maxes at 0.5 exactly on the
+    // seam; a marker is "at the border" once t clears this fraction of that
+    // max, i.e. within the innermost ~28% of the cross-fade band.
+    ZONE_BORDER_MARKER_THRESHOLD: 0.36,
+    // item 215: landmark anchor radius, as a fraction of the arena half-size —
+    // far enough from the central pond hub and close enough to the outer wall
+    // that every zone's signature silhouette reads from a distance without
+    // fouling the pond or clipping the boundary.
+    ZONE_LANDMARK_RADIUS_FRAC: 0.6,
 };
