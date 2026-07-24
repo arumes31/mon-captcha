@@ -22,6 +22,14 @@ const SOFTWARE_RENDERER_PATTERNS = [
     /software rasterizer/i,
     /microsoft basic render driver/i,
     /mesa.*llvmpipe/i,
+    // item 380: keep the list current as new confirmed-software strings
+    // surface across browsers/OSes. Same bar as above — only added when
+    // the string is an unambiguous software rasterizer, never a "this
+    // integrated chip might be weak" guess.
+    /google swiftshader/i,       // ANGLE's explicit vendor label for SwiftShader
+    /apple software renderer/i,  // macOS's software GL fallback
+    /softpipe/i,                 // Mesa's other software rasterizer (llvmpipe's sibling)
+    /virgl/i,                    // virtio-gpu's virtualized GL, software-backed on the host in headless/CI VMs
 ];
 
 // Spins up a throwaway 1x1 canvas + WebGL context purely to read the

@@ -266,4 +266,38 @@ export const CONFIG = {
     POI_DISCOVER_RADIUS: 9,         // item 454: distance at which a POI's first-visit sparkle triggers
     HEAT_HAZE_COUNT: 10,            // item 203: desert heat-shimmer motes
     SNOW_DRIFT_COUNT: 10,           // item 209: snow-mound decals near tree bases
+
+    // ============================================================
+    // Phase 4c additions (world-graphics-improvements.md items 34/36/39/
+    // 355/371/373/379/380 — see quality.js/lod.js/engine.js/gpu-detect.js).
+    // Appended block; nothing above this line was touched for Phase 4c.
+    // ============================================================
+
+    // item 34: the sun-shadow follow frustum (CONFIG.SHADOW_FOLLOW_RADIUS
+    // above) widens dynamically with player speed so fast-approaching
+    // shadow-casters don't pop in mid-sprint. Reaches RADIUS_MAX at
+    // SPEED_REF (world units/s, matches PLAYER_MAX_SPEED) and eases back
+    // down at low speed.
+    SHADOW_FOLLOW_RADIUS_MAX: 70,
+    SHADOW_FOLLOW_SPEED_REF: 8.0,
+    // item 39: extra PCFSoft shadow.radius blended in under heavy fog/
+    // overcast (softens contrast instead of only tinting the fog itself).
+    SHADOW_FOG_RADIUS_BOOST: 3,
+
+    // item 373: a 4th tier above 'high' — manual-only (see quality.js's
+    // ?quality=/?photo handling), never reached by the automatic FPS
+    // stepper, matching gpu-detect.js's "only act on high-confidence
+    // signals" stance (it can confirm a WEAK device, not a strong one).
+    SHADOW_MAP_ULTRA: 4096,
+    PIXEL_RATIO_ULTRA: 3,
+    // item 379: emergency resolution-scale lever below PIXEL_RATIO_LOW for
+    // a device that still can't hold FPS at 'low' (no tier left to step
+    // down to). Floored so it degrades gracefully instead of unboundedly.
+    PIXEL_RATIO_FLOOR: 0.6,
+    PIXEL_RATIO_STEP: 0.85,
+
+    // item 355/371: hysteresis band (fraction of the base radius) around
+    // each CREATURE_LOD threshold so anim/shadow/simple state doesn't
+    // flicker for a creature drifting right at the boundary distance.
+    LOD_HYSTERESIS: 0.15,
 };

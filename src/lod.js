@@ -20,18 +20,24 @@
    (weaker devices), which is where they matter.
    ============================================================ */
 
+import { CONFIG } from './config.js';
 import { state } from './state.js';
 
 // { anim, shadow, simple } world-unit radii. Arena half-extent is 50, so a
 // 'high' radius >= ~60 never triggers inside the play space (no visual change).
 const CREATURE_LOD = {
+    // item 373: 'ultra' is a stronger-GPU tier (see quality.js) — LOD itself
+    // doesn't need to be MORE generous than 'high' (already never triggers
+    // inside the arena), so it mirrors 'high' exactly; ultra's win is
+    // elsewhere (shadow-map size, bloom, pixel ratio).
+    ultra:  { animSq: 25 * 25, shadowSq: 999 * 999, simpleSq: 999 * 999 },
     high:   { animSq: 25 * 25, shadowSq: 999 * 999, simpleSq: 999 * 999 },
     medium: { animSq: 20 * 20, shadowSq: 30 * 30,   simpleSq: 46 * 46 },
     low:    { animSq: 14 * 14, shadowSq: 18 * 18,   simpleSq: 32 * 32 },
 };
 
 // Detail-flora ring radius (world units). >= 9000 means "never" (high tier).
-const FLORA_RING = { high: 9999, medium: 60, low: 42 };
+const FLORA_RING = { ultra: 9999, high: 9999, medium: 60, low: 42 };
 
 let _c = CREATURE_LOD.high;
 let _flora = FLORA_RING.high;
@@ -54,6 +60,20 @@ function setCreatureShadow(c, on) {
     for (let i = 0; i < parts.length; i++) parts[i].castShadow = on;
 }
 
+// items 355 + 371: hysteresis so a creature drifting right at a threshold
+// doesn't flicker between LOD/shadow states every frame (355 covers the
+// anim/simple thresholds; 371's "shadow pop" is the same flicker applied to
+// the shadow toggle, so one mechanism fixes both). `wasFar` is the state's
+// PREVIOUS classification; crossing back requires the tighter of the two
+// bounds, so the state only flips once it has cleared a real band, not a
+// single noisy sample right on the line.
+function hysteresisFar(wasFar, distSq, thresholdSq) {
+    const band = CONFIG.LOD_HYSTERESIS;
+    return wasFar
+        ? distSq > thresholdSq * (1 - band)   // already far: must come well back inside to clear it
+        : distSq > thresholdSq * (1 + band);  // already near: must go well beyond to become far
+}
+
 /* ------------------------------------------------------------
    Per-creature LOD. Sets shadow state as a side effect; returns an
    animation code the behaviour loop gates on:
@@ -62,8 +82,15 @@ function setCreatureShadow(c, on) {
      2 = simplified (caller skips secondary animation entirely)
    ------------------------------------------------------------ */
 export function creatureLod(c, distSq) {
-    setCreatureShadow(c, distSq <= _c.shadowSq);
-    if (distSq > _c.simpleSq) return 2;
-    if (distSq > _c.animSq) return 1;
-    return 0;
+    const shadowFar = hysteresisFar(!!c._shadowFar, distSq, _c.shadowSq);
+    c._shadowFar = shadowFar;
+    setCreatureShadow(c, !shadowFar);
+
+    const simpleFar = hysteresisFar(!!c._simpleFar, distSq, _c.simpleSq);
+    c._simpleFar = simpleFar;
+    if (simpleFar) return 2;
+
+    const animFar = hysteresisFar(!!c._animFar, distSq, _c.animSq);
+    c._animFar = animFar;
+    return animFar ? 1 : 0;
 }

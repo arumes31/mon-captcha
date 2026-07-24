@@ -38,6 +38,29 @@ import { registerCounter } from './perf.js';
 // horizontal FOV) still captures a large share of an 8x8 grid, so a slightly
 // finer grid tightens the frustum-edge cull enough to clear the >=30% drawn-cut
 // target on the worst-case seed while keeping the added draw-call count marginal.
+//
+// item 358 (reviewed, not changed): a formula deriving SECTORS from instance
+// count was considered so the grid scales further as MAX_FLORA_INSTANCES
+// grows, but there is no in-repo perf harness result for a DIFFERENT grid
+// size to validate against — swapping this deliberately-profiled constant for
+// an unvalidated formula risks silently drifting from the measured >=30%
+// drawn-cut target. Left as a fixed, revisit alongside the next MAX_FLORA_
+// INSTANCES bump using the existing perf.js/visreg tooling to re-measure.
+//
+// item 363 (already satisfied, no change needed): water-adjacent dressing
+// (flora/flora.js's addWaterDressing()) is appended into the same `details`
+// array terrain.js feeds into buildChunkedInstances() for state.detailChunks
+// — it already goes through applyChunkVisibility() below like any other
+// flora-detail instance, so it already gets both frustum sectoring and the
+// massif-occlusion test.
+//
+// item 365 (deferred, out of file scope): cave decor (caves/caves-decor.js)
+// builds its own per-cave InstancedMeshes via buildBoxInstances/
+// buildGeoInstances rather than this module's buildChunkedInstances(), so
+// wiring chunk-level distance culling in for it needs an edit on the
+// caves-decor.js side to adopt the (already-exported, ready) chunking API —
+// out of this agent's file scope. Same reasoning applies to item 357
+// (chamber-to-chamber occlusion needs caves.js-owned chamber geometry).
 export const SECTORS = 10; // ~8x8 (see note)
 
 function chunkingEnabled() {
