@@ -197,4 +197,9 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ---- Cave world/graphics backlog pass (sections 5/8/9/10 — items 79-94,
+    // 129-176) — a single new tunable added by that pass; everything else
+    // reused existing per-module magic numbers rather than growing this file.
+    CAVE_VIGNETTE_MAX: 0.4, // item 173: peak screen-vignette opacity at the cave-mouth "eyes adjusting" transient
 };

@@ -31,9 +31,9 @@
 import { registerCaveTheme, zoneGlowHue } from './caves-registry.js';
 import { state } from '../state.js';
 import { DecorKit, initDecor, updateDecor, disposeDecor } from './caves-decor.js';
-import { dressRockBase, addOreVeins, addFossils, addFissures, addWetGloss, addGuano } from './caves-rock.js';
-import { addHeroCrystal, addGeodes, addSelenite, addAmethyst, addSingingCrystal, addChamberChimes } from './caves-crystals.js';
-import { addBrackets, addStalks, addPuffballs, addProximityMushrooms, addVines, addPalePlants, addPoolRing, addMossCurtains, addFloorMats } from './caves-fungi.js';
+import { dressRockBase, addOreVeins, addFossils, addFissures, addWetGloss, addGuano, addFloorLitter } from './caves-rock.js';
+import { addHeroCrystal, addGeodes, addSelenite, addAmethyst, addSingingCrystal, addChamberChimes, addHeroGeode } from './caves-crystals.js';
+import { addBrackets, addStalks, addPuffballs, addProximityMushrooms, addVines, addPalePlants, addPoolRing, addMossCurtains, addFloorMats, addSporeField, addBioVeins, addMossTrail } from './caves-fungi.js';
 import { addNests } from './caves-nests.js'; // Phase 2j item 74 — nests/eggs storytelling
 import { addFloorTracks } from './caves-gameplay.js'; // Phase 2k item 84 — floor tracks/footprints
 
@@ -60,7 +60,7 @@ function decorateWith(theme, apply) {
         const decor = initDecor(ctx.ci, ctx.cave);
         const kit = new DecorKit(rec);
         dressRockBase(kit, ctx.cave, ctx);
-        try { apply(kit, rec, ctx, decor); } finally { kit.flush(); }
+        try { apply(kit, rec, ctx, decor); } finally { kit.flush(decor); } // item 171: shimmer registry
     };
 }
 // A hero-crystal accent light (only where decorate placed a hero).
@@ -84,6 +84,7 @@ registerCaveTheme('crystal', {
         if (!ctx.low) addAmethyst(rec, ctx.cave, ctx, decor, AMETHYST);
         addChamberChimes(ctx.cave, decor, CRYSTAL);
         if (!ctx.low && ctx.rng() < 0.55) addSingingCrystal(rec, ctx.cave, ctx, decor, 0xbfe9ff);
+        if (!ctx.low && ctx.rng() < 0.2) addHeroGeode(rec, ctx.cave, ctx, decor, CRYSTAL); // item 158
         addFloorTracks(kit, ctx.cave, ctx);   // item 84
     }),
     lights: heroLights('crystal'),
@@ -100,6 +101,7 @@ registerCaveTheme('geode', {
         addAmethyst(rec, ctx.cave, ctx, decor, 0xb060ff);
         addHeroCrystal(rec, ctx.cave, ctx, decor, AMETHYST);
         addChamberChimes(ctx.cave, decor, AMETHYST);
+        if (!ctx.low && ctx.rng() < 0.3) addHeroGeode(rec, ctx.cave, ctx, decor, 0xb060ff); // item 158
     }),
     lights: heroLights('geode'),
     update: updateDecor,
@@ -113,15 +115,19 @@ registerCaveTheme('fungal', {
     decorate: decorateWith('fungal', (kit, rec, ctx, decor) => {
         const ds = ctx.profile.densityScale;
         addBrackets(rec, ctx.cave, ctx, 0xe0a84a);
-        addStalks(rec, ctx.cave, ctx, 0x8affd0);
+        const stalkAnchors = addStalks(rec, ctx.cave, ctx, 0x8affd0);
         addPuffballs(rec, ctx.cave, ctx, decor, 0xd7e79a, cnt(4, ds));
-        addProximityMushrooms(rec, ctx.cave, ctx, decor, FUNGAL, cnt(5, ds));
+        const mushAnchors = addProximityMushrooms(rec, ctx.cave, ctx, decor, FUNGAL, cnt(5, ds));
         addVines(rec, ctx.cave, ctx);
         addPalePlants(rec, ctx.cave, ctx);
         if (!ctx.low) addMossCurtains(rec, ctx.cave, ctx);
         addFloorMats(rec, ctx.cave, ctx, decor, 0x6effa8);
-        addNests(kit, ctx.cave, ctx, 0xcfe79a); // spore-sac clutch (item 74)
+        addNests(kit, ctx.cave, ctx, 0xcfe79a, 'shed'); // spore-sac clutch + shed skin (items 74/164)
         addFloorTracks(kit, ctx.cave, ctx);     // item 84
+        // items 150/156: spore drift anchored at the mushroom/stalk clusters
+        addSporeField(rec, ctx.cave, ctx, decor, [...(stalkAnchors || []), ...(mushAnchors || [])], 0xcfe79a);
+        addBioVeins(kit, ctx.cave, ctx, FUNGAL);        // item 151
+        if (mushAnchors && mushAnchors.length) addMossTrail(kit, ctx.cave, ctx, mushAnchors[0], FUNGAL); // item 157
     }),
     update: updateDecor,
     dispose: disposeTheme,
@@ -137,7 +143,8 @@ registerCaveTheme('flooded', {
         addFloorMats(rec, ctx.cave, ctx, decor, 0x54e0c8);
         addPalePlants(rec, ctx.cave, ctx);
         addVines(rec, ctx.cave, ctx);
-        addNests(kit, ctx.cave, ctx, 0xcfeef0); // pale amphibian eggs near the water (item 74)
+        addNests(kit, ctx.cave, ctx, 0xcfeef0, 'shed'); // pale amphibian eggs + shed skin (items 74/164)
+        addFloorLitter(kit, ctx.cave, ctx, 'shells');   // item 172
     }),
     update: updateDecor,
     dispose: disposeTheme,
@@ -164,8 +171,9 @@ registerCaveTheme('bat', {
     decorate: decorateWith('bat', (kit, rec, ctx, decor) => {
         addGuano(kit, ctx.cave, ctx);
         addVines(rec, ctx.cave, ctx);
-        addNests(kit, ctx.cave, ctx, 0xe0d0b0); // pale eggs under the roost (item 74)
+        addNests(kit, ctx.cave, ctx, 0xe0d0b0, 'feathers'); // pale eggs + feathers (items 74/164)
         addFloorTracks(kit, ctx.cave, ctx);     // item 84 — clear prints on the bat-cave floor
+        addFloorLitter(kit, ctx.cave, ctx, 'bones');        // item 172
         if (!ctx.low) addFissures(kit, ctx.cave, ctx, 0x5a4a3a); // faint dim under-glow
     }),
     update: updateDecor,

@@ -14,7 +14,32 @@
 
 import { getGroundY } from '../heightfield.js';
 
-export function addNests(kit, cave, ctx, eggHue = 0xe0d6c2) {
+// item 164: extra "a creature actually lives here" detail beside the nest —
+// 'feathers' (thin pale flecks, bat roosts) or 'shed' (a curved shed-skin coil,
+// damp/fungal chambers). Purely cosmetic, kit-batched with the rest of the nest.
+function addNestLitter(kit, nx, nz, gy, rim, rng, litter) {
+    if (litter === 'feathers') {
+        const n = 4 + Math.floor(rng() * 4);
+        for (let i = 0; i < n; i++) {
+            const a = rng() * Math.PI * 2, rr = rim * (0.6 + rng() * 0.9);
+            const x = nx + Math.cos(a) * rr, z = nz + Math.sin(a) * rr;
+            kit.rock(x, gy + 0.03, z, 0.05, 0.02, 0.18 + rng() * 0.12,
+                rng() < 0.5 ? 0xcfc6b8 : 0x8f8578, a, rng() * Math.PI, (rng() - 0.5) * 0.4);
+        }
+    } else if (litter === 'shed') {
+        const a0 = rng() * Math.PI * 2, r0 = rim * (0.9 + rng() * 0.6);
+        let x = nx + Math.cos(a0) * r0, z = nz + Math.sin(a0) * r0;
+        let hd = a0 + Math.PI * 0.5;
+        const segs = 6 + Math.floor(rng() * 4);
+        for (let s = 0; s < segs; s++) {
+            hd += (rng() - 0.5) * 0.7;
+            kit.rock(x, gy + 0.025, z, 0.1, 0.018, 0.16, 0x9fae8a, 0, hd, 0);
+            x += Math.cos(hd) * 0.15; z += Math.sin(hd) * 0.15;
+        }
+    }
+}
+
+export function addNests(kit, cave, ctx, eggHue = 0xe0d6c2, litter = null) {
     const { rng, profile } = ctx, ds = profile.densityScale;
     const spots = (cave.chambers || []).map(c => ({ x: c.x, z: c.z }));
     if (!spots.length) return;
@@ -39,5 +64,6 @@ export function addNests(kit, cave, ctx, eggHue = 0xe0d6c2) {
             const a = rng() * Math.PI * 2, rr = rng() * rim * 0.5, sz = 0.13 + rng() * 0.06;
             kit.emit(eggHue, nx + Math.cos(a) * rr, gy + 0.09, nz + Math.sin(a) * rr, sz, sz * 1.4, sz, 0, rng() * Math.PI, 0);
         }
+        if (litter && rng() < 0.7) addNestLitter(kit, nx, nz, gy, rim, rng, litter);
     }
 }

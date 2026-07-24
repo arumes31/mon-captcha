@@ -39,13 +39,15 @@ import { CONFIG } from '../config.js';
 import { state } from '../state.js';
 import { mulberry32, worldNoise } from '../random.js';
 import { getGroundY, CAVES } from '../heightfield.js';
-import { spawnWaterRipple } from '../particles.js';
+import { spawnWaterRipple, spawnParticleBurst } from '../particles.js';
 import { getCaveThemeDescriptor, caveTierProfile, zoneGlowHue } from './caves-registry.js';
 import { themeBuildLog, resetThemeBuildLog } from './caves-themes.js'; // installs the 6 theme packs (side effect)
 import { buildTopoRock, buildTopoWater } from './caves-features.js'; // Phase 2f topology dressing
 import { buildCaveAtmos, disposeCaveAtmos } from './caves-atmos.js'; // Phase 2h eye/haze/dust/drafts
 import { buildCaveLight, disposeCaveLight } from './caves-light.js'; // Phase 2h lantern/god-rays/fill
 import { buildCaveWater, updateCaveWater, disposeCaveWater } from './caves-water.js'; // Phase 2i pools/stream/waterfall/mist
+import { buildCaveWaterFx, updateCaveWaterFx, disposeCaveWaterFx } from './caves-water-fx.js'; // items 81/82/87/89/90/91
+import { dripLandingSplash } from './caves-audio.js'; // item 79: audio-visual sync on real drip landings
 
 const V = CONFIG.VOXEL_SIZE;
 const lerp = THREE.MathUtils.lerp;
@@ -91,7 +93,10 @@ export function buildCaves() {
         buildDressing(c, rock, glowByCave[ci], drips, profile, rng, ci);
         buildTopoRock(c, rock, rng);          // Phase 2f: choke/talus/fallen/collar/arch
         buildTopoWater(c, rec);               // Phase 2f: under-river water sheet (culled via rec.aux)
-        if (c.wet) buildCaveWater(c, glowByCave[ci], drips, profile, rng, ci, rec, getGroundY); // Phase 2i
+        if (c.wet) {
+            buildCaveWater(c, glowByCave[ci], drips, profile, rng, ci, rec, getGroundY); // Phase 2i
+            buildCaveWaterFx(c, rec, rng, getGroundY);                                    // items 81/82/87/90/91
+        }
         addLights(c, profile, rec);
         runThemeHooks(desc, rec, profile, rng, rock, glowByCave[ci], drips);
     }
@@ -148,8 +153,8 @@ function runThemeHooks(desc, rec, profile, rng, rock, glow, drips) {
 /* ------------------------------------------------------------
    Rock shell — march the centreline, build arched cross-sections.
    ------------------------------------------------------------ */
-function pushShell(rock, x, y, z, floorY, dayK, rng, oversize) {
-    const jx = (rng() - 0.5) * 0.22, jy = (rng() - 0.5) * 0.24, jz = (rng() - 0.5) * 0.22;
+function pushShell(rock, x, y, z, floorY, dayK, rng, oversize, jitterMul = 1) {
+    const jx = (rng() - 0.5) * 0.22 * jitterMul, jy = (rng() - 0.5) * 0.24 * jitterMul, jz = (rng() - 0.5) * 0.22 * jitterMul;
     const s = oversize * (0.85 + rng() * 0.45);
     // strata banding + damp darkening low + warm daylight lift near the mouth
     const strata = 0.5 + 0.5 * Math.sin(y * 2.3 + worldNoise(x * 0.3, z * 0.3, 2, 2, 0.5) * 3);
@@ -162,7 +167,7 @@ function pushShell(rock, x, y, z, floorY, dayK, rng, oversize) {
     rock.push({
         x: x + jx, y: y + jy, z: z + jz, sx: s, sy: s, sz: s,
         color: new THREE.Color(r, g, b).getHex(),
-        rx: (rng() - 0.5) * 0.3, ry: rng() * Math.PI, rz: (rng() - 0.5) * 0.3,
+        rx: (rng() - 0.5) * 0.3 * jitterMul, ry: rng() * Math.PI, rz: (rng() - 0.5) * 0.3 * jitterMul,
     });
     if (rng() < 0.1) { // occasional protruding nub — breaks the surface up
         rock.push({
@@ -178,11 +183,14 @@ function crossSection(cx, cz, nx, nz, floorY, hw, ceilH, dayK, rock, rng, capped
     // item 8: under-river nodes have NO rock vault — the river water sheet is the
     // ceiling. Build only the side walls up to just below the water line so the
     // passage reads as an open trench beneath the river.
+    // item 136: this is the river-confluence crossing, so the rock reads
+    // water-erosion-SMOOTHED here (reduced position/rotation jitter) versus the
+    // jagged default elsewhere.
     if (underwater) {
         const capY = CONFIG.POND_WATER_LEVEL - 0.12;
         for (const side of [-1, 1]) {
             const wx = cx + nx * side * hw, wz = cz + nz * side * hw;
-            for (let y = floorY + V * 0.5; y <= capY; y += V) pushShell(rock, wx, y, wz, floorY, 0, rng, 1.14);
+            for (let y = floorY + V * 0.5; y <= capY; y += V) pushShell(rock, wx, y, wz, floorY, 0, rng, 1.14, 0.4);
         }
         return;
     }
@@ -271,15 +279,40 @@ function perpOf(path, i) {
     return { nx: -tz / l, nz: tx / l };
 }
 
-function addSpike(rock, x, baseY, z, h, up, rng) {
+// item 129: per-theme/zone size + tint variance on stalactites/stalagmites.
+// Computed once per cave (spikeStyleFor) and threaded through every addSpike
+// call in buildDressing so a crystal cave's spires read taller/cooler, a
+// volcanic cave's read stubbier/sooty, etc. — beyond the flat grey default.
+function spikeStyleFor(cave) {
+    let sizeMul = 1, tint = null;
+    switch (cave.theme) {
+        case 'crystal': case 'geode': sizeMul = 1.18; tint = [0.15, 0.16, 0.2]; break;
+        case 'fungal': sizeMul = 0.85; tint = [0.11, 0.14, 0.1]; break;
+        case 'bat': sizeMul = 0.92; tint = [0.1, 0.09, 0.085]; break;
+        default: break;
+    }
+    switch (cave.zoneId) {
+        case 'ice': case 'snow': case 'alpine': if (!tint) tint = [0.19, 0.2, 0.23]; sizeMul *= 1.08; break;
+        case 'volcanic': if (!tint) tint = [0.08, 0.07, 0.07]; sizeMul *= 0.9; break;
+        case 'desert': if (!tint) tint = [0.17, 0.14, 0.1]; break;
+    }
+    return { sizeMul, tint };
+}
+
+function addSpike(rock, x, baseY, z, h, up, rng, style) {
+    const sizeMul = (style && style.sizeMul) || 1;
+    h *= sizeMul;
     const steps = Math.max(2, Math.round(h / (V * 0.7)));
+    const tint = style && style.tint;
     for (let s = 0; s < steps; s++) {
         const t = s / steps;
-        const w = lerp(0.5, 0.1, t);
+        const w = lerp(0.5, 0.1, t) * (0.9 + sizeMul * 0.1);
         const y = up ? baseY + (s + 0.5) * V * 0.7 : baseY - (s + 0.5) * V * 0.7;
+        let r = 0.13 + (rng() - 0.5) * 0.05, g = 0.12, b = 0.15;
+        if (tint) { r = lerp(r, tint[0], 0.55); g = lerp(g, tint[1], 0.55); b = lerp(b, tint[2], 0.55); }
         rock.push({
             x, y, z, sx: w, sy: 0.82, sz: w,
-            color: new THREE.Color(0.13 + (rng() - 0.5) * 0.05, 0.12, 0.15).getHex(),
+            color: new THREE.Color(r, g, b).getHex(),
             rx: (rng() - 0.5) * 0.12, ry: rng() * Math.PI, rz: (rng() - 0.5) * 0.12,
         });
     }
@@ -306,6 +339,7 @@ function addGlowMushroom(rock, glow, x, floorY, z, rng) {
 
 function buildDressing(cave, rock, glow, drips, profile, rng, ci) {
     const ds = profile.densityScale; // item 100: prop density scales with the quality tier
+    const spikeStyle = spikeStyleFor(cave); // item 129
     const inPool = (x, z) => {
         if (cave.pools) { for (const p of cave.pools) if (Math.hypot(x - p.x, z - p.z) < p.r + 0.5) return true; return false; }
         return cave.pool && Math.hypot(x - cave.pool.x, z - cave.pool.z) < cave.pool.r + 0.5;
@@ -317,13 +351,13 @@ function buildDressing(cave, rock, glow, drips, profile, rng, ci) {
             if (rng() < 0.5 * ds) { // stalagmite
                 const lat = (rng() - 0.5) * n.hw * 1.2;
                 const x = n.x + perp.nx * lat, z = n.z + perp.nz * lat;
-                if (!inPool(x, z)) addSpike(rock, x, getGroundY(x, z), z, 0.5 + rng() * 1.1, true, rng);
+                if (!inPool(x, z)) addSpike(rock, x, getGroundY(x, z), z, 0.5 + rng() * 1.1, true, rng, spikeStyle);
             }
             if (rng() < 0.55 * ds) { // stalactite from the vault
                 const lat = (rng() - 0.5) * n.hw;
                 const sh = n.ceilH * 0.42;
                 const vy = n.floorY + sh + (n.ceilH - sh) * Math.sqrt(Math.max(0, 1 - (lat / n.hw) ** 2));
-                addSpike(rock, n.x + perp.nx * lat, vy, n.z + perp.nz * lat, 0.4 + rng() * 1.2, false, rng);
+                addSpike(rock, n.x + perp.nx * lat, vy, n.z + perp.nz * lat, 0.4 + rng() * 1.2, false, rng, spikeStyle);
             }
             if (profile.mushrooms && rng() < 0.28 * ds) { // glow mushroom hugging a wall
                 const lat = (rng() < 0.5 ? -1 : 1) * n.hw * (0.65 + rng() * 0.25);
@@ -332,7 +366,15 @@ function buildDressing(cave, rock, glow, drips, profile, rng, ci) {
             }
             if (profile.drips && rng() < 0.28 * ds) { // ceiling drip
                 const sh = n.ceilH * 0.42;
-                drips.push({ ci, x: n.x, z: n.z, topY: n.floorY + sh + (n.ceilH - sh) * 0.85 - 0.2, floorY: getGroundY(n.x, n.z) + 0.05, phase: rng(), speed: 0.35 + rng() * 0.4, pool: false });
+                const topY = n.floorY + sh + (n.ceilH - sh) * 0.85 - 0.2;
+                const dripFloorY = getGroundY(n.x, n.z) + 0.05;
+                drips.push({ ci, x: n.x, z: n.z, topY, floorY: dripFloorY, phase: rng(), speed: 0.35 + rng() * 0.4, pool: false });
+                // item 137: a subtle dark stain streak on the ceiling below the drip
+                rock.push({ x: n.x, y: topY - 0.14, z: n.z, sx: 0.22, sy: 0.5, sz: 0.14, color: 0x0c0b0a, rx: 0, ry: rng() * Math.PI, rz: 0 });
+                // item 175: a dim wet-look gleam on the dry floor beneath the drip —
+                // reuses the cave's existing glow-hue layer at low brightness so it's
+                // free of any new mesh/material (a hint of sheen, not a pool).
+                glow.push({ x: n.x, y: dripFloorY + 0.01, z: n.z, sx: 0.32, sy: 0.05, sz: 0.28, rx: 0, ry: rng() * Math.PI, rz: 0, bright: 0.16 });
             }
         }
     }
@@ -498,6 +540,11 @@ export function updateCaves(dt, elapsed) {
         if (visible && rec.cave.wet && rec.cave._water) {
             try { updateCaveWater(rec.cave, rec, dt, elapsed, b); } catch (e) {}
         }
+        // items 81/82/87/89/90/91: the wet cave's extra water FX (icicles,
+        // light shaft, algae, caustics, edge detail, footstep/ball ripples).
+        if (visible && rec.cave._waterFx) {
+            try { updateCaveWaterFx(rec.cave, rec, dt, elapsed, b); } catch (e) {}
+        }
     }
 
     // Drips are the finest detail (a per-frame geometry write) — LOD drops them
@@ -514,7 +561,13 @@ export function updateCaves(dt, elapsed) {
                 if (!rec || rec.band !== 'near') continue;
                 const t = (elapsed * d.speed + d.phase) % 1;
                 arr[i * 3 + 1] = lerp(d.topY, d.floorY, t * t);
-                if (d.pool && t < d.lastT && !state.isPaused) spawnWaterRipple(d.x, d.z, d.floorY - 0.04);
+                // item 79: a small splash particle + a SOUND-SYNCED ping fired on the
+                // exact frame this real drip lands, not just an ambient ripple ring.
+                if (d.pool && t < d.lastT && !state.isPaused) {
+                    spawnWaterRipple(d.x, d.z, d.floorY - 0.04);
+                    spawnParticleBurst(d.x, d.floorY - 0.02, d.z, 0xcfeffa, 3);
+                    dripLandingSplash(d.x, d.floorY, d.z);
+                }
                 d.lastT = t;
                 touched = true;
             }
@@ -539,6 +592,7 @@ export function disposeCaves() {
     disposeCaveLight();   // Phase 2h: lantern + shaft/glow textures (aux props freed below)
     disposeCaveAtmos();   // Phase 2h: dust field + atmos textures + caveFx reset
     disposeCaveWater();   // Phase 2i: pool/stream/waterfall/mist textures (aux meshes freed below)
+    disposeCaveWaterFx(); // items 81/82/87/89/90/91: shared water-fx textures (aux meshes freed below)
     disposeMesh(state.caveRockMesh); state.caveRockMesh = null;
     if (state.caveGlowMeshes) { for (const m of state.caveGlowMeshes) disposeMesh(m); state.caveGlowMeshes = null; }
     disposeMesh(state.cavePool); state.cavePool = null;

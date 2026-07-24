@@ -48,14 +48,17 @@ export function getDecor(cave) { return decorByCave.get(cave); }
 export function initDecor(ci, cave) {
     const d = {
         ci, cave,
-        hero: null,            // { mesh, mat, baseEmis, sx, sy, sz, phase }
+        hero: null,            // { mesh, mat, baseEmis, sx, sy, sz, phase, halo }
         crystalMats: [],       // instanced-crystal materials to shimmer (userData.base/ph)
-        chimePoints: [],       // [{ x, y, z, pick, spark }]
-        singing: [],           // [{ x, y, z, mat, baseEmis, cd }]
+        chimePoints: [],       // [{ x, y, z, pick, spark[, singing] }]
+        singing: [],           // [{ x, y, z, mat, baseEmis, cd, baseColor, cycle }]
         mushrooms: [],         // [{ x, y, z, mat, baseEmis }]
         puffballs: [],         // [{ x, y, z, mesh, baseScale, spore, burst, regrow, grow }]
         mats: [],              // floor-mat materials (userData.base/ph)
-        flash: 0, chimeCd: 0,
+        sparkles: [],          // [{ pts, arr, list }] — orbiting crystal-facet glints (item 149)
+        spores: [],            // [{ pts, arr, list }] — fungal spore drift (items 150/156)
+        shimmerMats: [],       // [{ mat, base, ph }] — shared subtle shimmer for static emissive props (item 171)
+        flash: 0, chimeCd: 0, showPulse: 0,
     };
     decorByCave.set(cave, d);
     cave._decor = d;
@@ -140,10 +143,19 @@ export class DecorKit {
         let a = this._emis.get(color); if (!a) { a = []; this._emis.set(color, a); }
         a.push({ x, y, z, sx: w, sy: h, sz: d, rx, ry, rz }); this.count++;
     }
-    flush() {
+    // item 171: when a `decor` record is passed, every kit.emit() emissive
+    // batch (ore veins, fissures, nests, veins, moss trails, ...) registers a
+    // shared subtle shimmer so static-looking props don't read dead next to
+    // the more prominent crystal/singing shimmer.
+    flush(decor) {
         pushAux(this.rec, buildBoxInstances(this._matte, matteMaterial(), true));
         pushAux(this.rec, buildBoxInstances(this._gloss, glossMaterial(), true));
-        for (const [color, items] of this._emis) pushAux(this.rec, buildBoxInstances(items, emissiveMaterial(color), false));
+        for (const [color, items] of this._emis) {
+            const mat = emissiveMaterial(color);
+            const mesh = buildBoxInstances(items, mat, false);
+            pushAux(this.rec, mesh);
+            if (mesh && decor) decor.shimmerMats.push({ mat, base: mat.emissiveIntensity, ph: Math.random() * 6 });
+        }
     }
 }
 
@@ -186,18 +198,44 @@ export function updateDecor(u) {
     const dt = u.dt, t = u.elapsed;
     const cam = state.camera && state.camera.position;
 
-    // chime flash decay
+    // chime flash decay + chamber-wide "light show" pulse decay (item 153)
     if (d.flash > 0) d.flash = Math.max(0, d.flash - dt * 2.4);
+    if (d.showPulse > 0) d.showPulse = Math.max(0, d.showPulse - dt * 0.55);
 
-    // hero crystal — slow shimmer + gentle scale pulse (+ chime flash)
+    // hero crystal — slow shimmer + gentle scale pulse (+ chime flash); a soft
+    // halo sprite (item 147) rides the same pulse so the landmark reads as a
+    // faint glow bloom without an extra light.
     if (d.hero) {
         const h = d.hero;
         const s = 1 + 0.035 * Math.sin(t * 0.85 + h.phase);
         h.mesh.scale.set(h.sx * s, h.sy * s, h.sz * s);
-        if (h.mat) h.mat.emissiveIntensity = h.baseEmis * (1 + 0.26 * Math.sin(t * 1.05 + h.phase) + 1.1 * d.flash);
+        const pulse = 1 + 0.26 * Math.sin(t * 1.05 + h.phase) + 1.1 * d.flash;
+        if (h.mat) h.mat.emissiveIntensity = h.baseEmis * pulse;
+        if (h.halo) {
+            h.halo.scale.setScalar(h.haloScale * (1 + 0.06 * Math.sin(t * 0.85 + h.phase) + 0.2 * d.flash));
+            h.halo.material.opacity = h.haloOpacity * (0.85 + 0.15 * Math.sin(t * 0.6 + h.phase));
+        }
     }
-    // crystal-cluster group shimmer + chime response
-    for (const m of d.crystalMats) m.emissiveIntensity = m.userData.base * (1 + 0.16 * Math.sin(t * 1.4 + m.userData.ph) + 1.0 * d.flash);
+    // crystal-cluster group shimmer + chime response + the rare synchronized
+    // chamber-wide light show (item 153) + a proximity glint that brightens as
+    // the player nears (approximates item 154's "catches your own glow" read).
+    let nearestChime = 999;
+    if (cam && d.chimePoints.length) {
+        for (let i = 0; i < d.chimePoints.length; i++) {
+            const cp = d.chimePoints[i];
+            const dd = Math.hypot(cam.x - cp.x, cam.z - cp.z);
+            if (dd < nearestChime) nearestChime = dd;
+        }
+    }
+    const glint = Math.max(0, 1 - nearestChime / 4.5) * 0.35;
+    // item 148: a footstep-vibration flicker — correlated with the player's own
+    // grounded movement speed, fading out with distance from the cluster, so
+    // nearby crystals read as resonant with the player's own footfalls.
+    const speed = (cam && state.player && state.player.velocity && state.player.grounded) ? Math.min(1, state.player.velocity.length() / 6) : 0;
+    const vib = speed * 0.09 * Math.sin(t * 24) * Math.max(0, 1 - nearestChime / 6);
+    for (const m of d.crystalMats) m.emissiveIntensity = m.userData.base * (1 + 0.16 * Math.sin(t * 1.4 + m.userData.ph) + 1.0 * d.flash + 1.6 * d.showPulse + glint + vib);
+    // shared subtle shimmer for otherwise-static emissive decor (item 171)
+    for (const sm of d.shimmerMats) sm.mat.emissiveIntensity = sm.base * (1 + 0.09 * Math.sin(t * 1.05 + sm.ph));
 
     // ball-strike chime — only when the player is truly near/inside
     if (u.near && d.chimePoints.length && state.projectiles.length) {
@@ -211,6 +249,9 @@ export function updateDecor(u) {
                         playCrystalChime(cp.pick);
                         d.flash = 1; d.chimeCd = 0.12;
                         spawnParticleBurst(cp.x, cp.y, cp.z, cp.spark, 5);
+                        // a ball-struck singing crystal starts its own colour-cycle
+                        // (item 145) and lights up the whole cluster (item 153)
+                        if (cp.singing) { cp.singing.cycle = 1.0; d.showPulse = 1.0; }
                     }
                     break;
                 }
@@ -218,13 +259,19 @@ export function updateDecor(u) {
         }
     }
 
-    // singing crystal — proximity glow + retriggered soft tone
+    // singing crystal — proximity glow + retriggered soft tone + a colour-cycle
+    // pulse (item 145) that decays after any chime hit; the proximity trigger
+    // also lights the whole chamber cluster (item 153).
     for (const sc of d.singing) {
         const dist = cam ? Math.hypot(cam.x - sc.x, cam.z - sc.z) : 999;
         const prox = Math.max(0, 1 - dist / SING_R);
         sc.mat.emissiveIntensity = sc.baseEmis * (1 + prox * 2.1) * (1 + 0.13 * Math.sin(t * 2.2));
+        if (sc.cycle > 0) {
+            sc.cycle = Math.max(0, sc.cycle - dt * 0.6);
+            if (sc.baseColor) sc.mat.color.copy(sc.baseColor).offsetHSL(0.12 * Math.sin(sc.cycle * Math.PI * 3), 0.1 * sc.cycle, 0.08 * sc.cycle);
+        } else if (sc.baseColor && !sc.mat.color.equals(sc.baseColor)) sc.mat.color.copy(sc.baseColor);
         sc.cd -= dt;
-        if (prox > 0.42 && sc.cd <= 0 && !state.isPaused) { playSingingCrystal(); sc.cd = 2.7; }
+        if (prox > 0.42 && sc.cd <= 0 && !state.isPaused) { playSingingCrystal(); sc.cd = 2.7; sc.cycle = 1.0; d.showPulse = Math.max(d.showPulse, 0.8); }
     }
 
     // glow mushrooms brighten as the player passes
@@ -236,6 +283,35 @@ export function updateDecor(u) {
 
     // glowing floor mats — slow breathing
     for (const mm of d.mats) mm.emissiveIntensity = mm.userData.base * (0.78 + 0.22 * Math.sin(t * 0.65 + mm.userData.ph));
+
+    // orbiting crystal-facet sparkles (item 149) — small Points clouds circling
+    // an anchor (hero / geode cluster), only moved while the cave is observed.
+    for (const sk of d.sparkles) {
+        const L = sk.list, arr = sk.arr;
+        for (let i = 0; i < L.length; i++) {
+            const s = L[i];
+            const a = t * s.sp + s.ph;
+            arr[i * 3] = s.ax + Math.cos(a) * s.r;
+            arr[i * 3 + 1] = s.ay + Math.sin(a * 0.7 + s.ph) * 0.22;
+            arr[i * 3 + 2] = s.az + Math.sin(a) * s.r;
+        }
+        sk.pts.geometry.attributes.position.needsUpdate = true;
+        sk.pts.material.opacity = sk.baseOpacity * (0.6 + 0.4 * Math.abs(Math.sin(t * 1.3 + sk.phase)));
+    }
+
+    // fungal spore drift (items 150/156) — slow floaty motes, distinct motion
+    // from the orbiting crystal sparkles above.
+    for (const sp of d.spores) {
+        const L = sp.list, arr = sp.arr;
+        for (let i = 0; i < L.length; i++) {
+            const m = L[i];
+            m.y += m.rise * dt; if (m.y > m.top) m.y = m.base;
+            arr[i * 3] = m.x + Math.sin(t * 0.35 + m.ph) * m.amp;
+            arr[i * 3 + 1] = m.y;
+            arr[i * 3 + 2] = m.z + Math.cos(t * 0.3 + m.ph) * m.amp;
+        }
+        sp.pts.geometry.attributes.position.needsUpdate = true;
+    }
 
     // puffballs — burst on player / ball contact, slow regrow. NOTE: the core
     // cull pass force-sets every aux mesh visible each frame BEFORE this update

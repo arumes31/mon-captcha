@@ -102,10 +102,11 @@ export function buildCaveAtmos() {
     for (let ci = 0; ci < CAVES.length; ci++) {
         const c = CAVES[ci];
         const rec = state.caveRender[ci];
-        const entry = { drafts: null, draftData: null, flies: null, flyData: null, glints: null, glintData: null };
+        const entry = { drafts: null, draftData: null, flies: null, flyData: null, glints: null, glintData: null, collapseDust: null };
         buildDrafts(c, rec, entry, rng);
         if (state.qualityLevel !== 'low') buildFireflies(c, rec, entry, rng);
-        if (c.wet && c.pool) buildGlints(c, rec, entry, rng);
+        buildGlints(c, rec, entry, rng);               // item 94: pool + hero/singing-crystal glint anchors
+        buildCollapseDust(c, rec, entry, rng);         // item 140
         state.caveAtmos.push(entry);
     }
 }
@@ -187,18 +188,46 @@ function buildFireflies(cave, rec, entry, rng) {
 }
 
 // Wet-wall / pool glints — tiny bright specks catching light at the waterline.
+// item 94: also anchored near the hero/singing crystal so a distant glint
+// hints at the feature before the player rounds the corner (visible from the
+// mid band since this whole system runs while band !== far).
 function buildGlints(cave, rec, entry, rng) {
-    const p = cave.pool;
+    const anchors = [];
+    if (cave.pool) anchors.push({ x: cave.pool.x, z: cave.pool.z, y: cave.pool.level, r: cave.pool.r });
+    if (cave._heroPos) anchors.push({ x: cave._heroPos.x, z: cave._heroPos.z, y: cave._heroPos.y, r: 1.1 });
+    if (cave._singingPos) anchors.push({ x: cave._singingPos.x, z: cave._singingPos.z, y: cave._singingPos.y, r: 0.9 });
+    if (!anchors.length) return;
     const count = state.qualityLevel === 'low' ? 6 : 14;
     const { pts, arr } = makePoints(rec, count, 0xdff6ff, 0.07, 0.0, true);
     const glints = [];
     for (let i = 0; i < count; i++) {
-        const a = rng() * Math.PI * 2, rr = p.r * (0.7 + rng() * 0.7);
-        const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
-        glints.push({ x, y: p.level + 0.05 + rng() * 0.5, z, tw: 0.6 + rng() * 1.8, ph: rng() * 6.28 });
+        const a = anchors[Math.floor(rng() * anchors.length)];
+        const ang = rng() * Math.PI * 2, rr = a.r * (0.7 + rng() * 0.7);
+        const x = a.x + Math.cos(ang) * rr, z = a.z + Math.sin(ang) * rr;
+        glints.push({ x, y: a.y + 0.05 + rng() * 0.5, z, tw: 0.6 + rng() * 1.8, ph: rng() * 6.28 });
     }
     entry.glints = pts; entry.glintData = { glints, arr };
     pts.userData.baseOpacity = 0.95;
+}
+
+// item 140: ambient rock-dust motes denser near collapse/rubble zones (fallen
+// breakdown blocks + choke piles), distinct from the general ambient dust field.
+function buildCollapseDust(cave, rec, entry, rng) {
+    if (state.qualityLevel === 'low') return;
+    const t = cave.topo; if (!t) return;
+    const anchors = [];
+    for (const fb of (t.fallen || [])) anchors.push({ x: fb.x, z: fb.z });
+    for (const ch of (t.choke || [])) anchors.push({ x: ch.x, z: ch.z });
+    if (!anchors.length) return;
+    const count = Math.min(24, anchors.length * 4);
+    const { pts, arr } = makePoints(rec, count, 0xd8c8a8, 0.05, 0.0, true);
+    const motes = [];
+    for (let i = 0; i < count; i++) {
+        const a = anchors[Math.floor(rng() * anchors.length)];
+        motes.push({ x: a.x + (rng() - 0.5) * 1.6, z: a.z + (rng() - 0.5) * 1.6, baseY: getGroundY(a.x, a.z) + 0.15, sp: 0.04 + rng() * 0.05, ph: rng() * 6.28, amp: 0.12 + rng() * 0.15 });
+    }
+    entry.collapseDust = { pts, arr, motes };
+    pts.userData.baseOpacity = 0.4;
 }
 
 /* ------------------------------------------------------------
@@ -243,6 +272,8 @@ export function updateCaveAtmos(dt, elapsed) {
 
     // ---- dust motes (kept in a box around the camera; faded by inside) ----
     updateDust(dt, elapsed, cam);
+    // item 173: vignette darkening at the eyes-adjusting transition moment
+    updateVignette();
 
     // ---- per-cave atmos only for observed caves ----
     if (!state.caveAtmos || !state.caveRender) return;
@@ -253,7 +284,46 @@ export function updateCaveAtmos(dt, elapsed) {
         animateDrafts(a, elapsed);
         animateFireflies(a, elapsed);
         animateGlints(a, elapsed);
+        animateCollapseDust(a, elapsed);
     }
+}
+
+function animateCollapseDust(a, elapsed) {
+    if (!a.collapseDust) return;
+    const { pts, arr, motes } = a.collapseDust;
+    for (let i = 0; i < motes.length; i++) {
+        const m = motes[i];
+        arr[i * 3] = m.x + Math.sin(elapsed * m.sp * 3 + m.ph) * m.amp;
+        arr[i * 3 + 1] = m.baseY + Math.sin(elapsed * m.sp + m.ph) * 0.3 + 0.3;
+        arr[i * 3 + 2] = m.z + Math.cos(elapsed * m.sp * 2.6 + m.ph) * m.amp;
+    }
+    pts.material.opacity = pts.userData.baseOpacity;
+    pts.geometry.attributes.position.needsUpdate = true;
+}
+
+/* ---- 173: a soft screen vignette that pulses at the mouth-crossing moment —
+   the gap between the FAST darkness response and the SLOW exposure-lift lag
+   IS the "eyes adjusting" transient, so it drives the vignette directly with
+   no extra state. A plain DOM overlay (same technique as the cave-collapse
+   dust tint in caves-gameplay.js), not a composer pass. ---- */
+let _vignetteEl = null;
+function ensureVignette() {
+    if (_vignetteEl || !state.container) return _vignetteEl;
+    const el = document.createElement('div');
+    el.style.cssText = [
+        'position:absolute', 'inset:0', 'pointer-events:none', 'z-index:15',
+        'background:radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 42%, rgba(4,4,8,0.6) 100%)',
+        'opacity:0',
+    ].join(';');
+    state.container.appendChild(el);
+    _vignetteEl = el;
+    return el;
+}
+function updateVignette() {
+    const el = ensureVignette();
+    if (!el) return;
+    const gap = Math.min(1, Math.abs(ambMix - expMix) * 2.2);
+    el.style.opacity = String(gap * CONFIG.CAVE_VIGNETTE_MAX);
 }
 
 function nearestCave(x, z) {
@@ -345,6 +415,7 @@ export function disposeCaveAtmos() {
     }
     if (state.caveDustTex) { try { state.caveDustTex.dispose(); } catch (e) {} state.caveDustTex = null; }
     if (state.caveAtmosTex) { try { state.caveAtmosTex.dispose(); } catch (e) {} state.caveAtmosTex = null; }
+    if (_vignetteEl) { if (_vignetteEl.parentNode) _vignetteEl.parentNode.removeChild(_vignetteEl); _vignetteEl = null; }
     state.caveAtmos = null;
     state.caveFx = { ambientMul: 1, exposureMul: 1, fogK: 0, fogDensity: CAVE_FOG_DENSITY, fogColor: CAVE_FOG_COLOR, inside: 0, depth: 0 };
 }

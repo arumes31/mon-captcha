@@ -60,6 +60,10 @@ function zoneKind(zoneId) {
     return 'water';
 }
 
+// item 80: host-zone humidity multiplier for condensation droplet density.
+const HUMID_ZONE = { jungle: 1.3, swamp: 1.35, mushroom: 1.2, meadow: 1.0, lakeside: 1.15, alpine: 0.85, ice: 0.7, snow: 0.7, desert: 0.5, volcanic: 0.9 };
+function humidityFactor(zoneId) { return HUMID_ZONE[zoneId] !== undefined ? HUMID_ZONE[zoneId] : 1.0; }
+
 /* ------------------------------------------------------------
    DATA — enrich the wet cave with its water features.
    ------------------------------------------------------------ */
@@ -269,15 +273,25 @@ function addCrystalCluster(glow, x, floorY, z, rng) {
     }
 }
 
+// item 83: the pool surface mirrors the cave's own crystal/theme glow colour
+// (a material tint blend, not an extra light) for mood lighting "for free".
 function buildPoolDisc(cave, p, surfY, rec, glow, rng, getGroundY) {
     const water = p.kind === 'water';
-    const mat = water
-        ? new THREE.MeshStandardMaterial({ color: 0x0f5a63, emissive: 0x0c454e, emissiveIntensity: 0.8, roughness: 0.06, metalness: 0.42, transparent: true, opacity: 0.92 })
-        : new THREE.MeshStandardMaterial({ color: 0x2a7f6e, emissive: 0x1a5a3a, emissiveIntensity: 1.0, roughness: 0.14, metalness: 0.22, transparent: true, opacity: 0.9 });
+    let baseCol = new THREE.Color(water ? 0x0f5a63 : 0x2a7f6e);
+    let emisCol = new THREE.Color(water ? 0x0c454e : 0x1a5a3a);
+    if (cave._glow) {
+        const tint = new THREE.Color(cave._glow);
+        baseCol = baseCol.lerp(tint, 0.2);
+        emisCol = emisCol.lerp(tint, 0.32);
+    }
+    const mat = new THREE.MeshStandardMaterial({
+        color: baseCol, emissive: emisCol, emissiveIntensity: water ? 0.8 : 1.0,
+        roughness: water ? 0.06 : 0.14, metalness: water ? 0.42 : 0.22, transparent: true, opacity: water ? 0.92 : 0.9,
+    });
     const disc = new THREE.Mesh(new THREE.CircleGeometry(p.r + 0.15, 30), mat);
     disc.rotation.x = -Math.PI / 2; disc.position.set(p.x, surfY, p.z); disc.receiveShadow = false;
     pushAux(rec, disc);
-    p._mat = mat;
+    p._mat = mat; p._mesh = disc; // _mesh: item 93 drain/fill anim reads this
     if (water) { // mirror-still waterline crystals (culled glow layer)
         const nC = 3 + Math.floor(rng() * 3);
         for (let i = 0; i < nC; i++) {
@@ -299,8 +313,12 @@ function buildIceDisc(cave, p, surfY, rec) {
     pushAux(rec, ring);
 }
 
-function addPoolLight(p, rec, profile) {
-    const col = p.kind === 'ice' ? 0x9fd8ff : p.kind === 'hotspring' ? 0xffb27a : 0x3fe0d0;
+// item 92: base colour stays kind-appropriate (cool-white ice, warm hotspring)
+// but the plain WATER case blends toward the cave's own theme accent so a
+// crystal-adjacent pool (should one ever exist) reads spectrum-shifted too.
+function addPoolLight(p, rec, profile, cave) {
+    let col = p.kind === 'ice' ? 0x9fd8ff : p.kind === 'hotspring' ? 0xffb27a : 0x3fe0d0;
+    if (p.kind === 'water' && cave && cave._glow) col = new THREE.Color(col).lerp(new THREE.Color(cave._glow), 0.4).getHex();
     const pl = new THREE.PointLight(col, (p.kind === 'ice' ? 3.4 : 4.0) * profile.lightMul, 8, 2);
     pl.position.set(p.x, p.level + 0.8, p.z); pl.castShadow = false;
     state.scene.add(pl);
@@ -344,12 +362,17 @@ function buildWaterfall(cave, rec) {
     cave._water.fall = { meshes, x: w.x, z: w.z, baseY: w.baseY };
 }
 
+// item 88: denser mist pooling in LOW chambers (a low floorY relative to the
+// cave's dry-passage baseline reads as a damp low-lying basin) than a shallow
+// pool up near a mouth.
 function buildMist(cave, rec, rng) {
     const hot = cave.waterKind === 'hotspring';
     const anchors = cave.pools.filter(p => p.kind !== 'ice');
     if (!anchors.length) return;
+    const lowest = Math.min(...anchors.map(a => a.floorY));
+    const depthBoost = Math.max(0, 0.35 - lowest) * 0.55; // 0 near a mouth-level pool, up to ~0.4 deep
     const per = hot ? 10 : 6;
-    const count = Math.min(64, anchors.length * per);
+    const count = Math.min(72, Math.round(anchors.length * per * (1 + depthBoost)));
     const pos = new Float32Array(count * 3);
     const motes = [];
     for (let i = 0; i < count; i++) {
@@ -366,7 +389,7 @@ function buildMist(cave, rec, rng) {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const mat = new THREE.PointsMaterial({
         color: hot ? 0xe8efe9 : 0xcfe6ea, size: hot ? 0.5 : 0.38, transparent: true,
-        opacity: hot ? 0.4 : 0.26, map: mistTex(), depthWrite: false, sizeAttenuation: true,
+        opacity: (hot ? 0.4 : 0.26) + depthBoost, map: mistTex(), depthWrite: false, sizeAttenuation: true,
     });
     const pts = new THREE.Points(geo, mat); pts.frustumCulled = false;
     pushAux(rec, pts);
@@ -383,7 +406,7 @@ function buildCondensation(cave, drips, rng, ci) {
         for (const p of cave.pools) { if (p.kind === 'ice') continue; dw = Math.min(dw, Math.hypot(n.x - p.x, n.z - p.z) - p.r); }
         if (cave.stream) { const q = streamSample(cave.stream, n.x, n.z); if (q) dw = Math.min(dw, q.lat); }
         const near = Math.max(0, 1 - dw / 6); // 1 at the water, 0 by ~6u away
-        if (rng() < 0.12 + near * 0.5) {
+        if (rng() < (0.12 + near * 0.5) * humidityFactor(cave.zoneId)) {
             const sh = n.ceilH * 0.42, lat = (rng() - 0.5) * n.hw * 0.8, perp = perpAt(main, i);
             const x = n.x + perp.nx * lat, z = n.z + perp.nz * lat;
             drips.push({ ci, x, z, topY: n.floorY + sh + (n.ceilH - sh) * 0.8 - 0.15, floorY: n.floorY + 0.05, phase: rng(), speed: 0.4 + rng() * 0.5, pool: false, lastT: 0 });
@@ -393,7 +416,7 @@ function buildCondensation(cave, drips, rng, ci) {
 
 // Called from caves.buildCaves for the wet cave (replaces the old buildPool).
 export function buildCaveWater(cave, glow, drips, profile, rng, ci, rec, getGroundY) {
-    cave._water = { pools: [], fall: null, mist: null, streamMat: null, sprayAcc: 0, bubAcc: 0 };
+    cave._water = { pools: [], fall: null, mist: null, streamMat: null, sprayAcc: 0, bubAcc: 0, drainPool: null };
     const low = profile.tier === 'low';
     for (const p of cave.pools) {
         const surfY = p.kind === 'ice' ? getGroundY(p.x, p.z) + 0.04 : p.level + 0.03;
@@ -408,13 +431,23 @@ export function buildCaveWater(cave, glow, drips, profile, rng, ci, rec, getGrou
             }
         }
         // accent light for ice + non-primary pools (the core lights the primary)
-        if (p.kind === 'ice' || !p.primary) addPoolLight(p, rec, profile);
+        if (p.kind === 'ice' || !p.primary) addPoolLight(p, rec, profile, cave);
         cave._water.pools.push(p);
     }
     if (cave.stream) buildStreamRibbon(cave, rec, getGroundY);       // underground stream (40)
     if (cave.waterfall) buildWaterfall(cave, rec);                   // ceiling-crack waterfall (41)
     if (!low) buildMist(cave, rec, rng);                            // rising mist / steam (43/47)
     if (!low && profile.drips) buildCondensation(cave, drips, rng, ci); // condensation (48)
+    // item 93: a slow drain/fill breathing animation on one non-primary, non-ice
+    // pool "near a vent" — purely a visual disc-level wobble (never touches the
+    // real carved floor/collision), for subtle life in a multi-pool cave.
+    const candidates = cave.pools.filter(p => !p.primary && p.kind !== 'ice' && p._mesh);
+    if (candidates.length) {
+        const dp = candidates[Math.floor(rng() * candidates.length)];
+        dp._drainBaseY = dp._mesh.position.y;
+        dp._drainPh = rng() * 6.283;
+        cave._water.drainPool = dp;
+    }
 }
 
 /* ------------------------------------------------------------
@@ -467,6 +500,13 @@ export function updateCaveWater(cave, rec, dt, elapsed, band) {
 
     if (w.streamMat) w.streamMat.emissiveIntensity = 0.6 + 0.25 * Math.sin(elapsed * 2.1);
     for (const p of w.pools) if (p._mat) p._mat.emissiveIntensity = (p.kind === 'hotspring' ? 0.9 : 0.75) + 0.12 * Math.sin(elapsed * 1.3 + p.x);
+
+    if (w.drainPool) { // item 93: slow draining/filling breathing on one pool
+        const dp = w.drainPool, cyc = 0.5 + 0.5 * Math.sin(elapsed * 0.14 + dp._drainPh);
+        dp._mesh.position.y = dp._drainBaseY - (1 - cyc) * 0.1;
+        dp._mesh.scale.setScalar(0.88 + cyc * 0.12);
+        if (dp._mat) dp._mat.opacity = (dp.kind === 'hotspring' ? 0.9 : 0.92) * (0.75 + cyc * 0.25);
+    }
 }
 
 /* ------------------------------------------------------------
