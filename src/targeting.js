@@ -9,6 +9,21 @@
    "Back Bonus!" flourish shown when a ball actually connects
    from behind. All DOM is JS-injected with inline styles, same
    pattern as the capture toast.
+
+   Backlog items folded in here (world-graphics-improvements.md):
+     335  a screen-edge chromatic pulse reinforces a back-bonus hit,
+          alongside the existing text flourish.
+     345  the ring's chance-color now EASES toward the live capture
+          chance instead of snapping the instant "behind" flips.
+     346  a faint world-space trajectory-ghost line (the same
+          BALL_SPEED/BALL_GRAVITY curve projectiles.js flies) previews
+          the throw arc while a target is hovered.
+     348  the panel's percent color/glow and the ring's base glow now
+          scale continuously with the live chance instead of 3 buckets.
+     349  a directional wedge on the ring marks the live back-bonus
+          cone so circling a creature shows exactly where it opens up.
+     350  hovering a target whose TRUE odds exceed CAPTURE_MAX_CHANCE
+          shows a small ceiling marker, teaching the cap exists.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -23,10 +38,26 @@ const RING_SURE = new THREE.Color(0x5ff0d0);   // ~100% — Palworld cyan
 const RING_RISKY = new THREE.Color(0xff9a4d);  // low odds — HUD amber
 const ringColor = new THREE.Color();
 
+// item 348: continuous panel percent color (red -> amber -> green), replacing
+// the old 3-bucket ternary. Scratch THREE.Colors so this never allocates.
+const _pctA = new THREE.Color();
+const _pctB = new THREE.Color();
+function pctCss(chance) {
+    if (chance >= 0.5) { _pctA.set(0xffd75e); _pctB.set(0x7fe8c9); _pctA.lerp(_pctB, (chance - 0.5) * 2); }
+    else { _pctA.set(0xff8a66); _pctB.set(0xffd75e); _pctA.lerp(_pctB, chance * 2); }
+    return '#' + _pctA.getHexString();
+}
+
+// item 346: trajectory-ghost simulation scratch (never allocates per frame).
+const _ghostPos = new THREE.Vector3();
+const _ghostVel = new THREE.Vector3();
+
 export function initTargeting() {
     buildRing();
     buildPanel();
     buildBackFlash();
+    buildEdgePulse();
+    buildTrajectoryGhost();
 }
 
 /* ------------------------------------------------------------
@@ -65,9 +96,35 @@ function buildRing() {
         arcs.add(arc);
     }
     group.add(arcs);
+
+    // item 349: a wedge spanning the live back-bonus cone (dot(throwDir,
+    // facing) > BACK_BONUS_DOT), built symmetric around local +X, flattened
+    // by the MESH's own rotation.x, then aimed purely via the HOLDER's
+    // rotation.y each frame — holder.rotation.y = PI - heading points the
+    // wedge's center at world direction (-cos(heading), -sin(heading)), i.e.
+    // directly BEHIND the creature, matching the (cos h, sin h) facing
+    // convention already used by isBehindCreature/projectiles.js below.
+    const backHalf = Math.acos(THREE.MathUtils.clamp(CONFIG.BACK_BONUS_DOT, -1, 1));
+    const backGeo = new THREE.RingGeometry(1.24, 1.46, 20, 1, -backHalf, backHalf * 2);
+    geos.push(backGeo);
+    const backMat = new THREE.MeshBasicMaterial({
+        color: 0x9dffdd, transparent: true, opacity: 0.28,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const backMesh = new THREE.Mesh(backGeo, backMat);
+    backMesh.rotation.x = -Math.PI / 2;
+    backMesh.renderOrder = 5;
+    const backHolder = new THREE.Group();
+    backHolder.add(backMesh);
+    group.add(backHolder);
+
     group.visible = false;
     state.scene.add(group);
-    state.targetRing = { group, mat, shadowMat, arcs, geos };
+    state.targetRing = {
+        group, mat, shadowMat, arcs, geos,
+        backCone: { holder: backHolder, mat: backMat },
+        dispChance: null, lastEaseT: 0,
+    };
 }
 
 /* ------------------------------------------------------------
@@ -144,17 +201,83 @@ function buildBackFlash() {
     state.backFlashEl = el;
 }
 
+// item 335: a full-viewport inset chromatic-edge pulse, layered pink+cyan so
+// it reads as a quick aberration flash rather than a flat color wash.
+function buildEdgePulse() {
+    if (!state.container) return;
+    const el = document.createElement('div');
+    el.style.cssText = [
+        'position:absolute', 'inset:0', 'pointer-events:none', 'z-index:24',
+        'opacity:0', 'transition:opacity 0.1s ease',
+        'box-shadow:inset 0 0 46px 4px rgba(255,80,190,0.45), inset 0 0 92px 14px rgba(95,240,208,0.4)',
+        'mix-blend-mode:screen',
+    ].join(';');
+    state.container.appendChild(el);
+    state.backEdgePulseEl = el;
+}
+
 export function showBackBonusFlourish() {
     const el = state.backFlashEl;
-    if (!el) return;
-    el.style.opacity = '1';
-    el.style.transform = 'translate(-50%,-50%) scale(1)';
-    if (state.backFlashTimer) clearTimeout(state.backFlashTimer);
-    state.backFlashTimer = setTimeout(() => {
-        if (!state.backFlashEl) return;
-        state.backFlashEl.style.opacity = '0';
-        state.backFlashEl.style.transform = 'translate(-50%,-50%) scale(0.6)';
-    }, 850);
+    if (el) {
+        el.style.opacity = '1';
+        el.style.transform = 'translate(-50%,-50%) scale(1)';
+        if (state.backFlashTimer) clearTimeout(state.backFlashTimer);
+        state.backFlashTimer = setTimeout(() => {
+            if (!state.backFlashEl) return;
+            state.backFlashEl.style.opacity = '0';
+            state.backFlashEl.style.transform = 'translate(-50%,-50%) scale(0.6)';
+        }, 850);
+    }
+    // item 335
+    const edge = state.backEdgePulseEl;
+    if (edge) {
+        edge.style.opacity = '1';
+        if (state.backEdgeTimer) clearTimeout(state.backEdgeTimer);
+        state.backEdgeTimer = setTimeout(() => {
+            if (state.backEdgePulseEl) state.backEdgePulseEl.style.opacity = '0';
+        }, 260);
+    }
+}
+
+/* ------------------------------------------------------------
+   Item 346 — a faint dashed line ghosting the throw's parabolic
+   arc (BALL_SPEED/BALL_GRAVITY, same as projectiles.js) while a
+   target is hovered, as a subtle aim-assist read.
+   ------------------------------------------------------------ */
+function buildTrajectoryGhost() {
+    if (!state.scene) return;
+    const n = CONFIG.TRAJECTORY_GHOST_STEPS;
+    const positions = new Float32Array(n * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.LineDashedMaterial({
+        color: 0xcdeee0, transparent: true, opacity: 0.45, dashSize: 0.16, gapSize: 0.16, depthWrite: false,
+    });
+    const line = new THREE.Line(geo, mat);
+    line.visible = false;
+    line.renderOrder = 4;
+    state.scene.add(line);
+    state.trajectoryGhost = { line, geo, mat, positions };
+}
+
+function updateTrajectoryGhost() {
+    const tg = state.trajectoryGhost;
+    if (!tg) return;
+    _ghostPos.copy(reuse.rayOrigin);
+    _ghostVel.copy(reuse.rayDir).multiplyScalar(CONFIG.BALL_SPEED);
+    const n = CONFIG.TRAJECTORY_GHOST_STEPS;
+    const dtSim = CONFIG.TRAJECTORY_GHOST_DT;
+    for (let i = 0; i < n; i++) {
+        tg.positions[i * 3] = _ghostPos.x;
+        tg.positions[i * 3 + 1] = _ghostPos.y;
+        tg.positions[i * 3 + 2] = _ghostPos.z;
+        _ghostVel.y += CONFIG.BALL_GRAVITY * dtSim;
+        _ghostPos.addScaledVector(_ghostVel, dtSim);
+    }
+    tg.geo.attributes.position.needsUpdate = true;
+    tg.geo.computeBoundingSphere();
+    tg.line.computeLineDistances();
+    tg.line.visible = true;
 }
 
 /* ------------------------------------------------------------
@@ -196,6 +319,7 @@ export function updateTargeting() {
     if (!hovered) {
         if (panel) panel.root.style.opacity = '0';
         if (ring) ring.group.visible = false;
+        if (state.trajectoryGhost) state.trajectoryGhost.line.visible = false;
         return;
     }
 
@@ -207,22 +331,24 @@ export function updateTargeting() {
     // Phase 2k cave modifiers (dead-end 78, grotto ball 83), under the SAME cap —
     // so the readout never promises 100% (a common cornered from behind with the
     // grotto ball still reads 95%, its true ceiling).
-    const chance = Math.min(
-        CONFIG.CAPTURE_MAX_CHANCE,
-        base + (behind ? CONFIG.CAPTURE_BACK_BONUS : 0) + caveCaptureBonus(hovered)
-    );
+    const uncapped = base + (behind ? CONFIG.CAPTURE_BACK_BONUS : 0) + caveCaptureBonus(hovered);
+    const chance = Math.min(CONFIG.CAPTURE_MAX_CHANCE, uncapped);
     const pctVal = Math.round(chance * 100);
     const tags = captureUiTags(hovered, behind); // e.g. ["Tunnel Back","Cornered"]
+    // item 350: the true odds exceed the hard ceiling — teach that it exists
+    const atCeiling = uncapped > CONFIG.CAPTURE_MAX_CHANCE + 0.001;
 
     if (panel) {
-        const key = def.id + '|' + pctVal + '|' + tags.join(',');
+        const key = def.id + '|' + pctVal + '|' + tags.join(',') + '|' + (atCeiling ? 1 : 0);
         if (panel.lastKey !== key) { // touch the DOM only when the readout changes
             panel.lastKey = key;
             panel.name.textContent = def.name;
             panel.tier.textContent = def.tier;
             panel.tier.style.color = TIER_COLORS[def.tier] || '#fff';
-            panel.pct.textContent = pctVal + '%';
-            panel.pct.style.color = chance >= 0.95 ? '#7fe8c9' : chance >= 0.7 ? '#ffd75e' : '#ff8a66';
+            panel.pct.textContent = pctVal + '%' + (atCeiling ? ' ▲' : '');
+            // item 348: continuous color + glow instead of a 3-bucket ternary
+            panel.pct.style.color = pctCss(chance);
+            panel.pct.style.textShadow = '0 0 ' + (3 + chance * 15).toFixed(0) + 'px currentColor';
             if (tags.length) { panel.bonus.textContent = tags.join(' + ') + ' Bonus'; panel.bonus.style.display = 'block'; }
             else panel.bonus.style.display = 'none';
         }
@@ -239,11 +365,31 @@ export function updateTargeting() {
         const s = THREE.MathUtils.clamp(hovered.hitRadius * 2.6, 0.55, 3.4) * (1 + Math.sin(now * 5.5) * 0.05);
         ring.group.scale.setScalar(s);
         ring.arcs.rotation.y = now * 1.6; // chasing arcs
-        ringColor.lerpColors(RING_RISKY, RING_SURE, THREE.MathUtils.clamp((chance - 0.5) * 2, 0, 1));
+
+        // item 345: ease the displayed chance toward the live one instead of
+        // snapping the ring's color the instant "behind" flips as the player
+        // circles the creature.
+        if (ring.dispChance === null) { ring.dispChance = chance; ring.lastEaseT = now; }
+        const easeDt = Math.min(0.1, Math.max(0, now - ring.lastEaseT));
+        ring.lastEaseT = now;
+        ring.dispChance += (chance - ring.dispChance) * Math.min(1, CONFIG.RING_COLOR_EASE * easeDt);
+
+        ringColor.lerpColors(RING_RISKY, RING_SURE, THREE.MathUtils.clamp((ring.dispChance - 0.5) * 2, 0, 1));
         ring.mat.color.copy(ringColor);
-        ring.mat.opacity = 0.55 + Math.sin(now * 5.5) * 0.15;
+        // item 348: base glow scales continuously with the eased chance
+        ring.mat.opacity = (0.35 + ring.dispChance * 0.35) + Math.sin(now * 5.5) * 0.15;
         ring.group.visible = true;
+
+        // item 349: aim the back-bonus cone wedge directly behind the
+        // creature's heading (see buildRing's comment for the rotation math).
+        if (ring.backCone) {
+            ring.backCone.holder.rotation.y = Math.PI - hovered.heading;
+            ring.backCone.mat.opacity = 0.22 + Math.sin(now * 4) * 0.08;
+        }
     }
+
+    // item 346
+    updateTrajectoryGhost();
 }
 
 // Is the player positioned behind the creature's heading? Same test the
@@ -265,6 +411,7 @@ export function disposeTargeting() {
         for (const g of state.targetRing.geos) { try { g.dispose(); } catch (e) {} }
         try { state.targetRing.mat.dispose(); } catch (e) {}
         try { state.targetRing.shadowMat.dispose(); } catch (e) {}
+        if (state.targetRing.backCone) { try { state.targetRing.backCone.mat.dispose(); } catch (e) {} }
         state.targetRing = null;
     }
     if (state.targetPanel) {
@@ -275,6 +422,17 @@ export function disposeTargeting() {
     if (state.backFlashEl) {
         if (state.backFlashEl.parentNode) state.backFlashEl.parentNode.removeChild(state.backFlashEl);
         state.backFlashEl = null;
+    }
+    if (state.backEdgeTimer) { clearTimeout(state.backEdgeTimer); state.backEdgeTimer = null; }
+    if (state.backEdgePulseEl) {
+        if (state.backEdgePulseEl.parentNode) state.backEdgePulseEl.parentNode.removeChild(state.backEdgePulseEl);
+        state.backEdgePulseEl = null;
+    }
+    if (state.trajectoryGhost) {
+        if (state.scene) state.scene.remove(state.trajectoryGhost.line);
+        try { state.trajectoryGhost.geo.dispose(); } catch (e) {}
+        try { state.trajectoryGhost.mat.dispose(); } catch (e) {}
+        state.trajectoryGhost = null;
     }
     state.targetHover = null;
 }

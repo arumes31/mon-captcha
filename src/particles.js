@@ -21,8 +21,8 @@ import {
 export const initParticles = initParticlePool;
 export const updateParticles = updateParticlePool;
 
-export function spawnParticleBurst(x, y, z, hexColor, count = 16) {
-    emitBurst(x, y, z, hexColor, count);
+export function spawnParticleBurst(x, y, z, hexColor, count = 16, endColor = null) {
+    emitBurst(x, y, z, hexColor, count, endColor);
 }
 
 export function spawnTrailMote(x, y, z, hexColor) {
@@ -30,20 +30,48 @@ export function spawnTrailMote(x, y, z, hexColor) {
 }
 
 /* ============================================================
-   Water Splash Ripples (expanding fading rings on the pond)
+   Water Splash Ripples & Ground Decals
+   ------------------------------------------------------------
+   Both are flat, fading rings on a shared geometry (state.rippleGeo,
+   built once in terrain.js, disposed once in game.js's teardown) —
+   only per-instance material + growth curve differ, so a ground
+   "decal" (item 352: scorch/dust/splash mark at a ball's rest point)
+   is just a second flavor of the same mesh/array/cleanup path the
+   water ripple already used, with zero new teardown surface.
    ============================================================ */
-export function spawnWaterRipple(x, z, level = CONFIG.POND_WATER_LEVEL) {
+function spawnGroundMark(x, y, z, o) {
     if (!state.scene || !state.rippleGeo) return;
     const mat = new THREE.MeshBasicMaterial({
-        color: 0xcfeffb, transparent: true, opacity: 0.75, depthWrite: false,
+        color: o.color, transparent: true, opacity: o.opacity, depthWrite: false,
     });
     const ring = new THREE.Mesh(state.rippleGeo, mat);
     ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x, level + 0.03, z);
-    ring.scale.setScalar(0.3);
-    ring.renderOrder = 2; // draw after water & foam so the ring never sorts under them
+    ring.position.set(x, y, z);
+    ring.scale.setScalar(o.fromScale);
+    ring.renderOrder = o.renderOrder;
     state.scene.add(ring);
-    state.ripples.push({ mesh: ring, age: 0, life: 0.9 });
+    state.ripples.push({ mesh: ring, age: 0, life: o.life, from: o.fromScale, to: o.toScale, fromOpacity: o.opacity });
+}
+
+export function spawnWaterRipple(x, z, level = CONFIG.POND_WATER_LEVEL) {
+    spawnGroundMark(x, level + 0.03, z, {
+        color: 0xcfeffb, opacity: 0.75, fromScale: 0.3, toScale: 2.9, life: 0.9,
+        renderOrder: 2, // draw after water & foam so the ring never sorts under them
+    });
+}
+
+// item 352: a fading ground-impact mark (scorch/dust/splash ring) at a missed
+// ball's final rest point, tinted per surface by the caller (projectiles.js
+// picks the color from the local zone palette / water check).
+export function spawnGroundDecal(x, y, z, color, opts = {}) {
+    spawnGroundMark(x, y + 0.012, z, {
+        color,
+        opacity: opts.opacity !== undefined ? opts.opacity : 0.5,
+        fromScale: opts.fromScale !== undefined ? opts.fromScale : 0.5,
+        toScale: opts.toScale !== undefined ? opts.toScale : 1.15,
+        life: opts.life !== undefined ? opts.life : CONFIG.DECAL_LIFE,
+        renderOrder: 1,
+    });
 }
 
 export function updateWaterRipples(dt) {
@@ -57,9 +85,9 @@ export function updateWaterRipples(dt) {
             rp.dead = true;
             continue;
         }
-        const s = 0.3 + t * 2.6;
+        const s = rp.from + t * (rp.to - rp.from);
         rp.mesh.scale.set(s, s, 1);
-        rp.mesh.material.opacity = 0.75 * (1 - t);
+        rp.mesh.material.opacity = rp.fromOpacity * (1 - t);
     }
     state.ripples = state.ripples.filter(rp => !rp.dead);
 }

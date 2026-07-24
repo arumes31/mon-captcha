@@ -8,6 +8,29 @@
    pond splash-and-ripple. Connecting with a living creature
    rolls the capture chance (tier base + back bonus) and hands
    the ball over to the catch sequence in capture.js.
+
+   Backlog items folded in here (world-graphics-improvements.md):
+     247/343  a linear motion-blur streak + a spin-blur disc trail
+              the ball in flight, on top of the existing sparkle motes.
+     248/262  ground-miss dust is tinted by the local zone surface
+              (snow/desert/dirt) and reads as a dulled "fizzle" burst,
+              distinct from the golden capture-success burst in capture.js.
+     254      water-splash particle count scales with impact speed
+              (a stand-in for "fall height" on the object this file owns).
+     338/347  a cave-wall/ceiling ricochet gets its own energy-scaled
+              spark burst and tints the ongoing trail "hot", reading
+              distinct from a clean open-air throw.
+     344      the sparkle trail reddens as BALL_DESPAWN_TIME approaches.
+     350      a capture roll that the CAPTURE_MAX_CHANCE ceiling actually
+              clipped gets a distinct quick "sting" flash on connect.
+     351      trail density ramps with proximity to the live targeting
+              hover (state.targetHover), rewarding a well-aimed throw.
+     352      a ground decal (scorch/dust/splash ring) marks a miss's
+              final rest point, tinted per surface.
+     353      a big ricochet chain (hits CAVE_BALL_MAX_BOUNCES) gives a
+              subtle camera-roll screen-shake to sell the trick shot.
+     354      a throw that grazes just outside the catch radius gets a
+              small "whiff" spark instead of nothing.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -15,13 +38,27 @@ import { CONFIG } from './config.js';
 import { state, reuse } from './state.js';
 import { getGroundY, isWaterAt, getWaterLevelAt } from './heightfield.js';
 import { scareCreatures } from './creatures/behavior.js';
-import { spawnParticleBurst, spawnWaterRipple, spawnTrailMote } from './particles.js';
+import { spawnParticleBurst, spawnWaterRipple, spawnTrailMote, spawnGroundDecal } from './particles.js';
 import { playThrow, playThump, playSplash } from './audio.js';
-import { makeCaptureBall, makeBallGlowSprite, removeBall } from './ball.js';
+import { makeCaptureBall, makeBallGlowSprite, makeFlashSprite, makeBallStreak, makeSpinBlurRing, removeBall } from './ball.js';
 import { requestThrow } from './viewmodel.js';
 import { beginCatchSequence } from './capture.js';
 import { showBackBonusFlourish } from './targeting.js';
-import { caveRicochet, caveThrowUpAngle, tunnelBackDot } from './caves/caves-gameplay.js';
+import { caveRicochet, caveThrowUpAngle, tunnelBackDot, caveCaptureBonus } from './caves/caves-gameplay.js';
+import { zoneAt } from './zones/zones.js';
+
+// Scratch objects — reused every frame so streak/ring orientation never allocates.
+const _unitZ = new THREE.Vector3(0, 0, 1);
+const _dirScratch = new THREE.Vector3();
+const _lerpColA = new THREE.Color();
+const _lerpColB = new THREE.Color();
+
+function lerpHexColor(hexA, hexB, t) {
+    _lerpColA.set(hexA);
+    _lerpColB.set(hexB);
+    _lerpColA.lerp(_lerpColB, t);
+    return _lerpColA.getHex();
+}
 
 export function tryCapture() {
     if (state.isCaptchaSolved || state.isPaused) return;
@@ -59,6 +96,17 @@ function spawnBall() {
     const spinAxis = new THREE.Vector3(0, 1, 0).cross(reuse.rayDir).normalize();
     if (spinAxis.lengthSq() < 0.01) spinAxis.set(1, 0, 0);
 
+    // items 247/343: a linear motion-blur streak + a spin-blur disc, tracked as
+    // separate scene objects (not ball children) so they never tag along into
+    // the catch sequence when the ball hands off to capture.js.
+    let streak = null, ring = null;
+    if (state.qualityLevel !== 'low') {
+        streak = makeBallStreak(state.caveBall ? 0x9ffff0 : 0xffcf8a);
+        ring = makeSpinBlurRing(state.caveBall ? 0xd8fffa : 0xfff3d0);
+        state.scene.add(streak);
+        state.scene.add(ring);
+    }
+
     state.projectiles.push({
         mesh: ball,
         pos: ball.position,
@@ -69,11 +117,76 @@ function spawnBall() {
         age: 0,
         radius: CONFIG.BALL_RADIUS,
         bounces: 0,             // Phase 2k item 79: cave wall/ceiling ricochet count
+        streak, ring,
+        ringSpin: 0,
+        hot: false,             // item 347: tints trail once this ball has ricocheted
+        whiffed: false,         // item 354: at most one close-whiff spark per throw
     });
     playThrow();
 }
 
+// items 247/343: dispose the per-ball streak/ring the moment its flight ends —
+// whether by despawn, wall/ground/water impact, or hand-off to the catch
+// sequence (which must never inherit flight-only VFX).
+function disposeProjectileFx(p) {
+    if (p.streak) {
+        if (state.scene) state.scene.remove(p.streak);
+        try { p.streak.material.dispose(); } catch (e) {}
+        p.streak = null;
+    }
+    if (p.ring) {
+        if (state.scene) state.scene.remove(p.ring);
+        try { p.ring.material.dispose(); } catch (e) {}
+        p.ring = null;
+    }
+}
+
+/* ------------------------------------------------------------
+   Item 353 — subtle screen-shake on a big ricochet chain. Camera
+   roll (rotation.z) is left untouched by PointerLockControls (which
+   only ever reads/writes pitch+yaw), so a small transient nudge here
+   never fights the look controls; it decays back to 0 on its own.
+   ------------------------------------------------------------ */
+let shakeMag = 0, shakeDur = 0, shakeT = 0;
+function triggerScreenShake(mag, dur) {
+    shakeMag = Math.max(shakeMag, mag);
+    shakeDur = dur;
+    shakeT = 0;
+}
+function updateScreenShake(dt) {
+    const cam = state.camera;
+    if (!cam) return;
+    if (shakeDur <= 0) {
+        if (cam.rotation.z !== 0) cam.rotation.z *= Math.max(0, 1 - dt * 10);
+        return;
+    }
+    shakeT += dt;
+    if (shakeT >= shakeDur) {
+        shakeDur = 0;
+        cam.rotation.z = 0;
+        return;
+    }
+    const k = 1 - shakeT / shakeDur;
+    cam.rotation.z = Math.sin(shakeT * 53) * shakeMag * k;
+}
+
+// items 248/262/352 — surface read at a ground-miss point: snow/ice zones puff
+// pale and soft, deserts kick up sandy dust, everything else takes its tint
+// from the local zone's dirt palette. Kept a plain lookup (no new state) so it
+// costs one zoneAt() call per impact, not per frame.
+function surfaceImpactColors(x, z) {
+    const zone = zoneAt(x, z);
+    if (!zone) return { dust: 0xdddddd, decal: 0x999999 };
+    if (zone.id === 'ice' || zone.id === 'snow' || (zone.particle && zone.particle.kind === 'snow')) {
+        return { dust: 0xf5faff, decal: 0xdcebf7 };
+    }
+    if (zone.id === 'desert') return { dust: 0xe0c890, decal: 0xc8a860 };
+    return { dust: zone.dirt || 0xcccccc, decal: zone.dirt || 0x8a8a8a };
+}
+
 export function updateProjectiles(dt) {
+    updateScreenShake(dt); // item 353 (runs even with zero projectiles, to decay)
+
     for (const p of state.projectiles) {
         if (!p.active) continue;
 
@@ -93,19 +206,58 @@ export function updateProjectiles(dt) {
         p.mesh.position.copy(p.pos);
         p.mesh.rotateOnWorldAxis(p.spinAxis, CONFIG.BALL_SPIN_RATE * dt); // tumble
 
+        // items 247/343: orient the linear streak along the velocity vector and
+        // the spin-blur disc perpendicular to the tumble axis.
+        if (p.streak || p.ring) {
+            const speed = p.vel.length();
+            if (p.streak) {
+                _dirScratch.copy(p.vel).normalize();
+                const len = Math.max(0.05, CONFIG.BALL_RADIUS * CONFIG.BALL_STREAK_LEN_MUL * speed * 0.12);
+                const width = CONFIG.BALL_RADIUS * CONFIG.BALL_STREAK_WIDTH_MUL;
+                p.streak.scale.set(width, width, len);
+                p.streak.quaternion.setFromUnitVectors(_unitZ, _dirScratch);
+                p.streak.position.copy(p.pos).addScaledVector(_dirScratch, -len * 0.5);
+                p.streak.material.opacity = THREE.MathUtils.clamp(speed / CONFIG.BALL_SPEED, 0.12, 0.5);
+            }
+            if (p.ring) {
+                p.ringSpin += dt * CONFIG.BALL_SPIN_RATE * 2;
+                p.ring.position.copy(p.pos);
+                p.ring.quaternion.setFromUnitVectors(_unitZ, p.spinAxis);
+                p.ring.rotateZ(p.ringSpin);
+                p.ring.scale.setScalar(CONFIG.BALL_RADIUS * 2.4);
+            }
+        }
+
         // sparkle/streak trail (extras are skipped on the 'low' tier)
         if (state.qualityLevel !== 'low') {
-            p.trailAcc += dt * CONFIG.BALL_TRAIL_RATE;
+            // item 344: ramp trail color toward a warning red as the ball nears
+            // BALL_DESPAWN_TIME, so an about-to-vanish miss reads clearly first.
+            const nearEnd = p.age / CONFIG.BALL_DESPAWN_TIME;
+            const warnStart = 1 - CONFIG.BALL_TRAIL_WARN_FRACTION;
+            const warn = nearEnd > warnStart ? Math.min(1, (nearEnd - warnStart) / CONFIG.BALL_TRAIL_WARN_FRACTION) : 0;
+
+            // item 351: denser trail the closer the ball gets to the creature
+            // the player is currently hovering/aiming at.
+            let trailMul = 1;
+            const th = state.targetHover;
+            if (th && th.alive && !th.capturing) {
+                const d = p.pos.distanceTo(th.pos);
+                if (d < CONFIG.CAPTURE_RANGE) trailMul += (1 - d / CONFIG.CAPTURE_RANGE) * CONFIG.BALL_PROXIMITY_TRAIL_BOOST;
+            }
+
+            p.trailAcc += dt * CONFIG.BALL_TRAIL_RATE * trailMul * (1 + warn * 0.8);
             while (p.trailAcc >= 1) {
                 p.trailAcc -= 1;
-                // amber-gold motes stay readable against both sky and grass
-                spawnTrailMote(p.pos.x, p.pos.y, p.pos.z, Math.random() < 0.5 ? 0xffb84d : 0xffd98a);
+                const base = p.hot ? (Math.random() < 0.5 ? 0xfff3c4 : 0xffffff) : (Math.random() < 0.5 ? 0xffb84d : 0xffd98a);
+                const col = warn > 0 ? lerpHexColor(base, 0xff3b30, warn) : base;
+                spawnTrailMote(p.pos.x, p.pos.y, p.pos.z, col);
             }
         }
 
         p.age += dt;
         if (p.age > CONFIG.BALL_DESPAWN_TIME) {
             p.active = false;
+            disposeProjectileFx(p);
             removeBall(p.mesh);
         }
     }
@@ -130,6 +282,7 @@ function collideProjectile(p) {
         if (distSq < catchRadius * catchRadius) {
             p.active = false;
             p.mesh.position.copy(p.pos);
+            disposeProjectileFx(p); // items 247/343: flight VFX end here, before hand-off
 
             // struck from behind? (ball travel dir vs creature facing). Phase 2k
             // item 85: in a tight tunnel the creature can't circle, so the "from
@@ -141,9 +294,35 @@ function collideProjectile(p) {
                 > tunnelBackDot(c);
             if (backHit) showBackBonusFlourish();
 
+            // item 350: mirror capture.js's own capped roll (read-only echo of the
+            // same formula, purely for a distinct "you hit the ceiling" sting —
+            // the actual roll/points still happen exactly once, in capture.js).
+            if (state.qualityLevel !== 'low') {
+                const base = CONFIG.CAPTURE_RATE_BY_TIER[c.def.tier] !== undefined
+                    ? CONFIG.CAPTURE_RATE_BY_TIER[c.def.tier] : CONFIG.CAPTURE_MAX_CHANCE;
+                const uncapped = base + (backHit ? CONFIG.CAPTURE_BACK_BONUS : 0) + caveCaptureBonus(c);
+                if (uncapped > CONFIG.CAPTURE_MAX_CHANCE + 0.001) {
+                    const sting = makeFlashSprite(0xffffff, 0.12);
+                    sting.position.copy(p.pos);
+                    sting.renderOrder = 6;
+                    state.scene.add(sting);
+                    state.captureFlashes.push({ sprite: sting, age: 0, life: 0.12, from: 0.12, to: 0.85 });
+                }
+            }
+
             // the ball lives on as the catch ball — no removal here
             beginCatchSequence(c, i, Math.sqrt(distSq), backHit, p.mesh, p.vel);
             return;
+        }
+
+        // item 354: a close whiff — just outside the catch radius, once per
+        // throw — softens the "why didn't that count" feeling on a near-miss.
+        if (!p.whiffed && state.qualityLevel !== 'low') {
+            const whiffR = catchRadius * CONFIG.WHIFF_RADIUS_MUL;
+            if (distSq < whiffR * whiffR) {
+                p.whiffed = true;
+                spawnParticleBurst(p.pos.x, p.pos.y, p.pos.z, 0xfff3c4, CONFIG.WHIFF_SPARK_COUNT, 0x9a8a6a);
+            }
         }
     }
 
@@ -152,7 +331,22 @@ function collideProjectile(p) {
     // ground/water despawn so a wall hit ricochets instead of ending the flight;
     // the floor + water keep their existing impact + despawn below. Outdoors and
     // on the arena walls this is a no-op (the ball isn't inside a passage).
-    if (caveRicochet(p)) { p.mesh.position.copy(p.pos); return; }
+    if (caveRicochet(p)) {
+        p.mesh.position.copy(p.pos);
+        // items 338/347/353: energy-scaled spark distinct from a clean open-air
+        // throw, a "hot" trail tint for the rest of this ball's flight, and a
+        // subtle screen-shake once the ball has used up its LAST allowed bounce
+        // (a maxed-out chain — the trick-shot payoff moment).
+        if (state.qualityLevel !== 'low') {
+            const energyK = THREE.MathUtils.clamp(p.vel.length() / CONFIG.BALL_SPEED, 0.15, 1);
+            spawnParticleBurst(p.pos.x, p.pos.y, p.pos.z, 0xfff3c4, Math.round(CONFIG.RICOCHET_SPARK_BASE * energyK), 0xff8a3c);
+        }
+        p.hot = true;
+        if (p.bounces >= CONFIG.CAVE_BALL_MAX_BOUNCES) {
+            triggerScreenShake(CONFIG.RICOCHET_SHAKE_MAG, CONFIG.RICOCHET_SHAKE_TIME);
+        }
+        return;
+    }
 
     // Boundary collision bounds check
     const halfArena = CONFIG.ARENA_SIZE / 2 - CONFIG.WALL_THICKNESS;
@@ -168,15 +362,23 @@ function collideProjectile(p) {
 
     if (hitWall || hitGround || hitWater) {
         p.active = false;
+        disposeProjectileFx(p); // items 247/343
 
         if (hitWater && !hitWall) {
-            // Proper water splash: blue droplets, pale spray, expanding ring
-            spawnParticleBurst(p.pos.x, waterLevel + 0.05, p.pos.z, 0x4fc3f7, 16);
-            spawnParticleBurst(p.pos.x, waterLevel + 0.1, p.pos.z, 0xe3f6ff, 8);
+            // item 254: splash size/count scales with impact speed (this file's
+            // stand-in for "fall height" — the object it actually owns).
+            const impactSpeed = THREE.MathUtils.clamp(Math.abs(p.vel.y) / 9 + 0.4, 0.4, 1.6);
+            spawnParticleBurst(p.pos.x, waterLevel + 0.05, p.pos.z, 0x4fc3f7, Math.round(16 * impactSpeed));
+            spawnParticleBurst(p.pos.x, waterLevel + 0.1, p.pos.z, 0xe3f6ff, Math.round(8 * impactSpeed));
             spawnWaterRipple(p.pos.x, p.pos.z, waterLevel);
             playSplash();
         } else {
-            spawnParticleBurst(p.pos.x, p.pos.y, p.pos.z, 0xdddddd, 12);
+            // items 248/262/352: surface-tinted "fizzle" dust (a dulled fade,
+            // distinct from capture.js's golden success burst) + a fading
+            // ground decal at the rest point.
+            const surf = surfaceImpactColors(p.pos.x, p.pos.z);
+            spawnParticleBurst(p.pos.x, p.pos.y, p.pos.z, surf.dust, 12, 0x35322c);
+            spawnGroundDecal(p.pos.x, terrainH, p.pos.z, surf.decal);
             playThump();
         }
 
