@@ -1,5 +1,61 @@
 /* ============================================================
    Config
+   ------------------------------------------------------------
+   item 500 (world-graphics-improvements.md, Section 30): folding
+   the 500-item backlog into this file's existing "item N" comment
+   convention, as a triaged record rather than a blanket done/not-done.
+
+   Items 1-480 (Sections 1-29) were split by file-disjoint area across
+   9 parallel passes and merged in; each landed constant/comment below
+   cites its own item number(s) at the point of use (grep "item " in
+   this file and its sibling modules for the full trail) — see each
+   pass's own in-code section header comment (e.g. "Zones - Biome
+   Identity pass", "Cave world/graphics backlog pass") for exactly
+   which items that pass covered and which it explicitly skipped.
+
+   Section 30 (items 481-500, meta/engineering rather than visual) was
+   triaged directly rather than split out:
+     - 481 dev frame-time profiler, 494 GPU timer-query profiling: not
+       built — SwiftShader (this project's primary CI/test target) has
+       no timer-query support, so a GPU-bound/CPU-bound split wouldn't
+       be measurable in the harness that would exercise it. Deferred.
+     - 482 texture/geometry leak logging, 486 buildX/disposeX audit:
+       tests/leak.mjs already exists for exactly this. Used it to find
+       and fix a real gap (atmosphere-fx.js's 3 meshes + fire light,
+       and separately the EffectComposer + its passes, were never
+       disposed in game.js's destroy() — both fixed).
+     - 483 WebGPURenderer path: evaluated, not built. A renderer-backend
+       swap is a large, risky change for a buildless/dependency-free
+       project pinned to one CDN'd three.js version; not attempted.
+     - 484 reuse render-targets across composer passes: already true
+       by construction — EffectComposer allocates one ping-pong target
+       pair shared by every pass added to it.
+     - 485 resize-debounce: built (game.js onResize, 120ms coalesce).
+       While in that code path, found and fixed a real bug: composer.
+       setSize() was never called on resize at all, so post-processing
+       silently rendered at the stale pre-resize resolution.
+     - 487 flora-instance headroom logging, 493 draw-call budget:
+       tests/perfbudget.mjs already asserts an instance-total ceiling;
+       added a matching draw-call ceiling assertion (item 493) alongside
+       the existing (already-logged) drawCalls figure.
+     - 488/499 visreg coverage for graphics changes: tests/visreg.mjs
+       already exists; baselines were regenerated against this merge.
+     - 489 supersampling toggle for capture: already satisfied by the
+       existing `?photo` mode (items 373/382) forcing the manual-only
+       'ultra' tier's PIXEL_RATIO_ULTRA.
+     - 490 shader precompile warm-up, 491 async cave/terrain build:
+       real but sizable engine-level changes; not attempted this pass.
+     - 492 WebXR/VR stretch goal: noted only, per the item's own wording.
+     - 495 linear-space color audit: already answered — see terrain.js's
+       "near-linear authored hex" comment (zone palettes are unpacked
+       byte-wise, matching how voxelColor writes them; outputColorSpace
+       = SRGBColorSpace handles the framebuffer's final conversion).
+     - 496 headless offscreen screenshotting: already satisfied by the
+       existing Playwright-based tests/*.mjs harness.
+     - 497 render-target MSAA vs antialias:true: evaluated — the current
+       antialias flag is already conditional on software-renderer
+       detection (engine.js), which is the sharper lever for this
+       project's actual SwiftShader-heavy usage; not changed further.
    ============================================================ */
 
 // World seed — randomized on every page load (crypto with a Date fallback)

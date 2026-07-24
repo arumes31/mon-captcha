@@ -36,6 +36,11 @@ const INIT_BUDGET_MS = 60000;    // loose smoke ceiling incl. CDN fetch + SwiftS
                                  // shader compile (software GL is slow, esp. cold);
                                  // catches a hang, not micro-perf.
 const FPS_FLOOR = 3;             // SwiftShader-tolerant floor (software GL ~10 fps)
+// item 493: draw-call budget alert so future content additions (more crystal
+// clusters, more decor) don't silently regress frame time without anything
+// failing. Same headroom ratio as INSTANCE_CEILING vs its measured worst-case
+// (~1.2x), applied to the worst observed drawCalls (455, seed 20260718).
+const DRAWCALL_CEILING = 600;
 
 // Pinned seeds for the RENDER-based perf sample. Kept small on purpose: each
 // seed here renders under SwiftShader (per-context software shader compile is
@@ -96,6 +101,9 @@ async function main() {
   const worstSeed = samples.find((s) => s.total === worst);
   const maxInit = Math.max(...samples.map((s) => s.initMs));
   const minFps = Math.min(...samples.map((s) => s.fps));
+  const drawCalls = samples.map((s) => (s.info ? s.info.calls : null)).filter((v) => typeof v === 'number');
+  const worstDraw = drawCalls.length ? Math.max(...drawCalls) : null;
+  const worstDrawSeed = samples.find((s) => s.info && s.info.calls === worstDraw);
 
   console.log('');
   rep.check('every seed reported an instance total', totals.length === SEEDS.length,
@@ -104,6 +112,8 @@ async function main() {
     `worst=${worst} (seed ${worstSeed ? worstSeed.seed : '?'})`);
   rep.check(`init time <= ${INIT_BUDGET_MS}ms (all seeds)`, maxInit <= INIT_BUDGET_MS, `max=${maxInit}ms`);
   rep.check(`fps floor > ${FPS_FLOOR} (all seeds)`, minFps > FPS_FLOOR, `min=${minFps}`);
+  rep.check(`worst-case draw calls <= ${DRAWCALL_CEILING}`, worstDraw !== null && worstDraw <= DRAWCALL_CEILING,
+    `worst=${worstDraw} (seed ${worstDrawSeed ? worstDrawSeed.seed : '?'})`);
 
   // Cleanliness across the whole run.
   const merged = { pageErrors: [], consoleErrors: [], contextLost: [] };

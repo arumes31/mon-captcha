@@ -280,6 +280,18 @@ export function destroy() {
         state.particles = null;
     }
 
+    // Clean post-processing (composer + its own render targets, plus each
+    // pass's internal targets — was never disposed/nulled here, so a
+    // destroy()/init() cycle orphaned one EffectComposer's GPU resources
+    // per cycle instead of freeing them).
+    if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null; }
+    if (state.composer) { try { state.composer.dispose(); } catch (e) {} state.composer = null; }
+    state.composerEnabled = false;
+    state.outlinePass = null;
+    state.bloomPass = null;
+    state.filmPass = null;
+    state.fxPass = null;
+
     // Clean engine
     if (state.renderer) {
         if (state.renderer.domElement && state.renderer.domElement.parentNode) {
@@ -449,13 +461,27 @@ function onCanvasMouseDown(e) {
     tryCapture();
 }
 
+// item 485: debounce so a window resize / mobile orientation-change drag
+// doesn't thrash renderer+composer render-target reallocation on every
+// intermediate event — only the settled final size gets applied.
+let _resizeTimer = null;
 function onResize() {
+    if (_resizeTimer) clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(applyResize, 120);
+}
+
+function applyResize() {
+    _resizeTimer = null;
     if (!state.container || !state.renderer || !state.camera) return;
     const w = state.container.clientWidth;
     const h = state.container.clientHeight;
     state.camera.aspect = w / h;
     state.camera.updateProjectionMatrix();
     state.renderer.setSize(w, h);
+    // Bug fix: the composer's own render targets (+ OutlinePass/UnrealBloomPass's
+    // internal ones) were never resized here, so a post-resize frame rendered
+    // post-processing at the stale old resolution into the new-size canvas.
+    if (state.composer) state.composer.setSize(w, h);
 }
 
 function onContextLost(e) {
