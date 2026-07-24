@@ -31,9 +31,9 @@ import { initAudio } from './audio.js';
 import { initMusic, musicSetActive, disposeMusic, musicCurrentMood } from './music.js';
 import { initCaveAudio, updateCaveAudio, caveAudioSetActive, stopCaveAudio, disposeCaveAudio, caveAudioStats } from './caves/caves-audio.js';
 import { initQuality, recordFps } from './quality.js';
-import { ui, cacheUI, updateCounterUI, showClickToPlay, showPauseOverlay, disposeHintToast } from './ui.js';
+import { ui, cacheUI, updateCounterUI, showClickToPlay, showPauseOverlay, disposeHintToast, captureSeedThumbnail } from './ui.js';
 import { zoneAt, ZONES } from './zones/zones.js';
-import { PARTITION, SPAWN, MOUNTAIN, MOUNTAINS, VENT, CAVES, caveAt, sampleCave, caveConfine, caveCeilingAt, getTerrainHeight, getGroundY, isWaterAt, getWaterLevelAt, getWaterDepth, caveSlippery, riverAt, riverPointAt, riverSpan, BORDER_FALL } from './heightfield.js';
+import { PARTITION, SPAWN, MOUNTAIN, MOUNTAINS, VENT, CAVES, caveAt, sampleCave, caveConfine, caveCeilingAt, getTerrainHeight, getGroundY, isWaterAt, getWaterLevelAt, getWaterDepth, caveSlippery, riverAt, riverPointAt, riverSpan, BORDER_FALL, OXBOW } from './heightfield.js';
 import { LAVA, lavaAt } from './lava.js';
 import { forceWeather, forceLightning, weatherState, updateWeather, initWeather, disposeWeather } from './weather/weather.js';
 import { CAVE_THEMES, getCaveThemeDescriptor, caveThemeRegistered, registeredCaveThemes } from './caves/caves-registry.js';
@@ -393,7 +393,38 @@ export function init() {
                     drawnInstances: perfDrawnInstances,
                 },
                 updateCulling, // drive occlusion/LOD directly (headless rAF is parked)
+                // Section 23 (procedural variety, items 389-402): OXBOW is this
+                // seed's river-course descriptor; captureSeedThumbnail is the
+                // item-399 capture primitive; everything else this pass added
+                // (zone twin-flourish, mountain archetype, cave branchBias/
+                // gemLucky, weather personality, creature raritySkew, cloud
+                // streak threshold, flora species jitter) is already reachable
+                // above via PARTITION/MOUNTAINS/CAVES/weatherState()/state.*.
+                OXBOW, captureSeedThumbnail,
             };
+        }
+
+        // item 402: "reroll" debug shortcut — Alt+R regenerates the world seed
+        // by navigating to a fresh ?seed=N (a full reload). QA/screenshot
+        // sweeps across many layouts without hand-editing the URL each time.
+        // Gated the same as the ?probe hook above: this touches nothing for
+        // normal players, only a QA/test session that opted into ?probe.
+        // (A true in-place reroll would need every seeded module-scope IIFE —
+        // heightfield's L/MOUNTAINS/PARTITION/CAVES/SPAWN, zones' partition,
+        // and every sibling module's own `mulberry32(WORLD_SEED ^ salt)` init —
+        // to re-run from scratch; that is an engine-wide rebuild far outside
+        // this backlog item's scope, so a reload is the deliberate, safe
+        // substitute that still delivers the same QA benefit.)
+        if (typeof window !== 'undefined' && window.location && /[?&]probe\b/.test(window.location.search)) {
+            window.addEventListener('keydown', (e) => {
+                if (e.altKey && e.code === 'KeyR') {
+                    e.preventDefault();
+                    const newSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('seed', String(newSeed));
+                    window.location.href = url.toString();
+                }
+            }, false);
         }
 
         state.clock.last = performance.now();

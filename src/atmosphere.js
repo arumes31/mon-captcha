@@ -30,6 +30,15 @@ export function buildClouds() {
     const geo = state.sharedBoxGeo;
     const r = mulberry32(CONFIG.WORLD_SEED ^ 0xc10d);
     const low = state.qualityLevel === 'low';
+    // item 400: seed-driven cloud-pattern PERSONALITY, beyond density — shifts
+    // the item-438 profile THRESHOLD (below) rather than the roll itself, so
+    // the per-cluster `r` draws stay the same shape of distribution but some
+    // seeds trend heavily streaky and others heavily puffy/round. Independent
+    // stream (own salt) so it never perturbs the `r` sequence above/below.
+    const streakRng = mulberry32((CONFIG.WORLD_SEED ^ 0x51c0a1) >>> 0);
+    const streakThreshold = Math.max(0.12, Math.min(0.65,
+        0.35 + (streakRng() * 2 - 1) * CONFIG.CLOUD_STREAK_BIAS_STRENGTH));
+    state.cloudStreakThreshold = streakThreshold; // ?probe-visible confirmation this differs per seed
 
     const layers = [
         { count: low ? 6 : 12, yMin: 30, ySpan: 8, spread: 70, block: 2.5, color: 0xfff7ea, opacity: 0.68, driftSpeed: 0.05, driftAmp: 6 },
@@ -52,8 +61,8 @@ export function buildClouds() {
             // wider/flatter streaky profile and a taller layered-stack profile,
             // alongside the original round puff, picked per cluster.
             const profile = r();
-            const w = profile < 0.35 ? 7 + Math.floor(r() * 5) : 5 + Math.floor(r() * 6);
-            const d = profile < 0.35 ? 2 + Math.floor(r() * 2) : 3 + Math.floor(r() * 4);
+            const w = profile < streakThreshold ? 7 + Math.floor(r() * 5) : 5 + Math.floor(r() * 6);
+            const d = profile < streakThreshold ? 2 + Math.floor(r() * 2) : 3 + Math.floor(r() * 4);
             const stacked = profile > 0.8;
             for (let x = 0; x < w; x++) {
                 for (let z = 0; z < d; z++) {

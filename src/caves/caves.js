@@ -73,6 +73,15 @@ export function buildCaves() {
     const dummy = new THREE.Object3D();
     const tmp = new THREE.Color();
 
+    // item 398: rare seed-driven "lucky seed" — independent stream (own salt)
+    // so it never perturbs the per-cave `((CONFIG.WORLD_SEED ^ 0xcafe) +
+    // ci*0x9e37)` dressing streams below. Most seeds are unaffected; a small
+    // fraction instead make EVERY cave's crystal clusters noticeably denser —
+    // a discoverable "this world's caves are gem-rich" flourish.
+    const gemRng = mulberry32((CONFIG.WORLD_SEED ^ 0x6e3c17) >>> 0);
+    const gemLucky = gemRng() < CONFIG.CAVE_GEM_LUCKY_CHANCE;
+    state.caveGemLucky = gemLucky; // ?probe-visible via state
+
     const rock = [];                      // shared dark rock (shell + spikes + rubble) — always-on landmark layer
     const glowByCave = CAVES.map(() => []);
     const drips = [];
@@ -90,7 +99,7 @@ export function buildCaves() {
         state.caveRender.push(rec);
         for (const path of c.paths) buildTube(c, path, rock, rng);
         buildRubble(c, rock, rng);
-        buildDressing(c, rock, glowByCave[ci], drips, profile, rng, ci);
+        buildDressing(c, rock, glowByCave[ci], drips, profile, rng, ci, gemLucky);
         buildTopoRock(c, rock, rng);          // Phase 2f: choke/talus/fallen/collar/arch
         buildTopoWater(c, rec);               // Phase 2f: under-river water sheet (culled via rec.aux)
         if (c.wet) {
@@ -337,7 +346,7 @@ function addGlowMushroom(rock, glow, x, floorY, z, rng) {
     glow.push({ x, y: floorY + 0.38, z, sx: 0.3, sy: 0.14 / V, sz: 0.3, rx: 0, ry: rng() * Math.PI, rz: 0, bright: 0.7 + rng() * 0.2 });
 }
 
-function buildDressing(cave, rock, glow, drips, profile, rng, ci) {
+function buildDressing(cave, rock, glow, drips, profile, rng, ci, gemLucky) {
     const ds = profile.densityScale; // item 100: prop density scales with the quality tier
     const spikeStyle = spikeStyleFor(cave); // item 129
     const inPool = (x, z) => {
@@ -381,7 +390,8 @@ function buildDressing(cave, rock, glow, drips, profile, rng, ci) {
     // crystal clusters cluster in the chambers (not on the pool centre)
     for (const ch of cave.chambers) {
         if (inPool(ch.x, ch.z)) continue;
-        const nCl = profile.tier === 'low' ? 1 : 2 + Math.floor(rng() * 2);
+        let nCl = profile.tier === 'low' ? 1 : 2 + Math.floor(rng() * 2);
+        if (gemLucky) nCl = Math.round(nCl * CONFIG.CAVE_GEM_LUCKY_MUL); // item 398
         for (let c = 0; c < nCl; c++) {
             const a = rng() * Math.PI * 2, r = rng() * 1.2;
             const x = ch.x + Math.cos(a) * r, z = ch.z + Math.sin(a) * r;

@@ -30,12 +30,38 @@ function inCaveFootprint(x, z) {
 import { zoneAt, zoneBlendAt } from '../zones/zones.js';
 import { addSpecies, speciesRadius } from './flora-trees.js';
 
-// Pick a species from a zone's weighted [species, weight] table
-function pickSpecies(table, r) {
+// item 401: deterministic per (WORLD_SEED, zoneId, species) scalar in [-1,1] —
+// a small standalone integer hash (no shared RNG stream needed, so it's cheap
+// and order-independent to call from inside the placement loop's many
+// pickSpecies() calls below). Keyed off the zone id + species STRING, not
+// call order, so it never drifts if the placement loop is later refactored.
+function hashStr(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+    return h >>> 0;
+}
+function seededJitter(zoneId, species) {
+    let h = (CONFIG.WORLD_SEED ^ hashStr(zoneId + '|' + species)) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+    h ^= h >>> 16;
+    return ((h >>> 0) / 4294967296) * 2 - 1;
+}
+
+// Pick a species from a zone's weighted [species, weight] table. item 401:
+// zoneId (optional) applies a per-seed, per-species weight skew so the SAME
+// zone's forest composition doesn't read pixel-identical every load — the
+// allowed species SET never changes, just which ones are more/less common.
+function pickSpecies(table, r, zoneId) {
     let total = 0;
-    for (const [, w] of table) total += w;
+    const weighted = table.map(([s, w]) => {
+        const mul = zoneId ? Math.max(0.15, 1 + seededJitter(zoneId, s) * CONFIG.FLORA_SPECIES_MIX_JITTER) : 1;
+        const ww = w * mul;
+        total += ww;
+        return [s, ww];
+    });
     let roll = r() * total;
-    for (const [s, w] of table) {
+    for (const [s, w] of weighted) {
         roll -= w;
         if (roll <= 0) return s;
     }
@@ -99,7 +125,7 @@ export function buildFlora(half, V_STEP) {
             if ((t.x - x) ** 2 + (t.z - z) ** 2 < 13) { ok = false; break; }
         }
         if (!ok) continue;
-        const species = pickSpecies(zone.flora.trees, r);
+        const species = pickSpecies(zone.flora.trees, r, zone.id);
         treeList.push({ x, z, species, r: speciesRadius(species) });
         addSpecies(details, x, z, V_STEP, species, r);
         placed++;

@@ -235,6 +235,58 @@ export const ZONE_DEFS = [
 export const ZONE_BY_ID = {};
 for (const z of ZONE_DEFS) ZONE_BY_ID[z.id] = z;
 
+/* ------------------------------------------------------------
+   item 396: seed-driven palette MICRO-VARIANCE. A small per-zone
+   hue/lightness nudge, drawn ONCE per zone here (own independent RNG
+   stream — separate salt from every draw below, so it never perturbs
+   the alpine/volcanic pinning or the zone shuffle), applied directly
+   to each zone's authored hex fields. Every consumer (terrain.js,
+   flora.js, atmosphere.js, ui.js's compass chip, this module's own
+   blend helpers in zones.js) reads these same object fields, so the
+   seeded variance is free everywhere with zero other-file changes —
+   the same zone id just doesn't render pixel-identical every load.
+   ------------------------------------------------------------ */
+function hexToHsl(hex) {
+    const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0, s = 0; const l = (max + min) / 2;
+    if (d > 1e-6) {
+        s = d / (1 - Math.abs(2 * l - 1));
+        if (max === r) h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60; if (h < 0) h += 360;
+    }
+    return [h, s, l];
+}
+function hslToHex(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r1 = 0, g1 = 0, b1 = 0;
+    if (h < 60) { r1 = c; g1 = x; } else if (h < 120) { r1 = x; g1 = c; }
+    else if (h < 180) { g1 = c; b1 = x; } else if (h < 240) { g1 = x; b1 = c; }
+    else if (h < 300) { r1 = x; b1 = c; } else { r1 = c; b1 = x; }
+    const r = Math.max(0, Math.min(255, Math.round((r1 + m) * 255)));
+    const g = Math.max(0, Math.min(255, Math.round((g1 + m) * 255)));
+    const b = Math.max(0, Math.min(255, Math.round((b1 + m) * 255)));
+    return (r << 16) | (g << 8) | b;
+}
+function jitterHex(hex, dh, dl) {
+    const [h, s, l] = hexToHsl(hex);
+    return hslToHex(h + dh, s, Math.max(0, Math.min(1, l + dl)));
+}
+(() => {
+    const paletteRng = mulberry32((CONFIG.WORLD_SEED ^ 0x9a1e77) >>> 0);
+    const PALETTE_KEYS = ['surf0', 'surf1', 'dirt', 'rock', 'grass'];
+    for (const z of ZONE_DEFS) {
+        const dh = (paletteRng() * 2 - 1) * 360 * CONFIG.ZONE_PALETTE_HUE_JITTER;
+        const dl = (paletteRng() * 2 - 1) * CONFIG.ZONE_PALETTE_LIGHT_JITTER;
+        for (const k of PALETTE_KEYS) z[k] = jitterHex(z[k], dh, dl);
+    }
+})();
+
 const TAU = Math.PI * 2;
 const NZ = 12;                    // zone count
 const SECTOR_W = TAU / NZ;
@@ -281,6 +333,25 @@ export function makePartition(mountainBearing, ventBearing) {
     for (let s = 0; s < NZ; s++) {
         if (assign[s]) continue;
         assign[s] = rest[k++];
+    }
+
+    // item 389: rare seed-driven "twin zone" flourish — beyond the already-
+    // fully-random shuffle above (every non-anchor zone id already lands in a
+    // uniformly random sector per seed), a small chance that ONE non-anchor
+    // zone type claims a SECOND sector, displacing a different non-anchor zone
+    // entirely for that seed. So a lucky seed occasionally reads as "there are
+    // two Autumn Woods this run" / "no jungle this time" instead of always the
+    // same one-of-each permutation. Independent RNG stream (own salt) so it
+    // never perturbs the alpine/volcanic pinning or the shuffle draws above —
+    // every existing seed's base layout is otherwise unaffected.
+    const twinRng = mulberry32((CONFIG.WORLD_SEED ^ 0x71a1e) >>> 0);
+    if (twinRng() < CONFIG.ZONE_TWIN_CHANCE) {
+        const restSectors = [];
+        for (let s = 0; s < NZ; s++) if (s !== alpine && s !== volcanic) restSectors.push(s);
+        const dupIdx = Math.floor(twinRng() * restSectors.length);
+        let dropIdx = Math.floor(twinRng() * restSectors.length);
+        if (dropIdx === dupIdx) dropIdx = (dropIdx + 1) % restSectors.length;
+        assign[restSectors[dropIdx]] = assign[restSectors[dupIdx]];
     }
 
     const gentleSectors = new Set();

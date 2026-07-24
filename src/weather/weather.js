@@ -39,7 +39,7 @@ import { isWaterAt } from '../heightfield.js';
 import { zoneAt } from '../zones/zones.js';
 import { spawnWaterRipple } from '../particles.js';
 import { playThunder } from '../audio.js';
-import { WEATHER_STATES, WEATHER_BIAS, WEATHER_DEFAULT_BIAS, WEATHER_LOW_TIER_STATES, DAY_NIGHT, ZONE_SKY_BIAS, RAINBOW_FROM } from './weather-data.js';
+import { WEATHER_STATES, WEATHER_BIAS, WEATHER_DEFAULT_BIAS, WEATHER_LOW_TIER_STATES, DAY_NIGHT, ZONE_SKY_BIAS, RAINBOW_FROM, WEATHER_STORMY, WEATHER_CALM } from './weather-data.js';
 import { initDayNight, updateDayNight, triggerRainbow, disposeDayNight, dayNightDebug } from './daynight.js';
 
 const RAIN_MAX = 1200;
@@ -58,6 +58,7 @@ const W = {
     splashAcc: 0, strikeCd: 0,
     wetness: 0,
     boltLine: null, breathSpr: null,
+    personality: 0, // item 393: seed-driven "stormy vs dry" bias, set once in initWeather()
 };
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -78,6 +79,13 @@ export function initWeather() {
     W.flashK = 0; W.splashAcc = 0; W.strikeCd = 0; W.wetness = 0;
     const ang = W.rng() * Math.PI * 2;
     W.windDir = { x: Math.cos(ang), z: Math.sin(ang) };
+    // item 393: seed-driven weather PERSONALITY — independent stream (own
+    // salt) so it never perturbs W.rng's draw sequence above/below. -STRENGTH
+    // = this world trends drier/calmer, +STRENGTH = trends stormier, applied
+    // as a weight multiplier in rollNext() on top of the fixed per-zone
+    // WEATHER_BIAS tables (never replacing them).
+    const personalityRng = mulberry32((CONFIG.WORLD_SEED ^ 0x4f1e9a) >>> 0);
+    W.personality = (personalityRng() * 2 - 1) * CONFIG.WEATHER_PERSONALITY_STRENGTH;
 
     const scene = state.scene, sun = state.sun, hemi = state.hemi, skyFill = state.skyFill;
     W.base = {
@@ -225,6 +233,19 @@ function rollNext() {
             if (z && WEATHER_BIAS[z.id]) table = WEATHER_BIAS[z.id];
         }
     } catch (e) {}
+    // item 393: layer this world's seeded stormy/dry PERSONALITY on top of the
+    // fixed per-zone table above — a positive personality boosts the stormy
+    // states' weights and dampens the calm ones (and vice versa), so the same
+    // zone still keeps its own character but two different seeds standing in
+    // that same zone don't feel identically likely to see a storm roll in.
+    if (W.personality) {
+        table = table.map(([s, w]) => {
+            let mul = 1;
+            if (WEATHER_STORMY.has(s)) mul = 1 + W.personality;
+            else if (WEATHER_CALM.has(s)) mul = 1 - W.personality;
+            return [s, Math.max(0.15, w * mul)];
+        });
+    }
     // 'low' tier: still zone-biased, just restricted to the non-precip states
     // (see WEATHER_LOW_TIER_STATES) so the sky/fog/mood keeps varying by zone
     // without paying for rain/snow particles or lightning.
@@ -251,6 +272,7 @@ export function weatherState() {
     return {
         cur: W.cur, next: W.nxt, t: +W.t.toFixed(3), forced: W.forced, wind: +(state.weatherWind || 0).toFixed(2),
         wetness: +W.wetness.toFixed(3), dayNight: dayNightDebug(),
+        personality: +W.personality.toFixed(3), // item 393: ?probe-visible confirmation this differs per seed
     };
 }
 // Fire a lightning flash on demand (test rig — catch a flash frame in a shot).

@@ -39,6 +39,8 @@
 
 import { state } from './src/state.js';
 import { init, destroy } from './src/game.js';
+import { CONFIG } from './src/config.js';
+import { captureSeedThumbnail } from './src/ui.js';
 
 /* ============================================================
    Public API Expose
@@ -51,6 +53,8 @@ const publicAPI = {
     getToken: () => state.token,
     getFps: () => Math.round(state.fps),
     getQualityLevel: () => state.qualityLevel,
+    getWorldSeed: () => CONFIG.WORLD_SEED, // item 395: the exact number a ?seed=N link reproduces
+    getSeedThumbnail: (maxDim) => captureSeedThumbnail(maxDim), // item 399: foundation-only capture primitive
 };
 
 if (typeof window !== 'undefined') {

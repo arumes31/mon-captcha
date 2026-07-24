@@ -100,6 +100,24 @@ const L = (() => {
     const uBpool = half - 4.4;                 // plunge pool centre distance
     const uBlip = half - 0.3;                  // cliff-lip crossing at the perimeter wall
 
+    // item 397: seed-driven river-course VARIETY — a rare wide "lazy bend"
+    // belly widened into the MAIN course (B) at one seeded point along it,
+    // reading as an oxbow-like slow, wide pool on some seeds. Implemented as
+    // an additive width bulge in riverAt()'s existing wWater formula below
+    // (same technique the plunge-pool bulge already uses) rather than a
+    // wholly separate carved water body — carving a detached cut-off lake
+    // would need far more invasive surgery to this file's height/water field
+    // than this backlog item justifies, and this still delivers genuine
+    // per-seed visible variety (most seeds: none; some seeds: a lazy wide
+    // bend) at effectively zero risk to the fords/aquatic-patrol/isWaterAt
+    // machinery, which all already key off wWater generically.
+    const uBStart = CONFIG.POND_RADIUS - 1.5;
+    const hasOxbow = r() < CONFIG.RIVER_OXBOW_CHANCE;
+    const oxbowSpan = Math.max(4, uBpool - uBStart - 30);
+    const oxbowU = hasOxbow ? uBStart + 16 + r() * oxbowSpan : 0;
+    const oxbowWidth = hasOxbow ? CONFIG.RIVER_OXBOW_WIDTH_MUL * (0.8 + r() * 0.5) : 0;
+    const oxbowSpread = 4 + r() * 2.5;
+
     return {
         theta, ct, st,
         // course M (mountain tributary) wiggle
@@ -128,6 +146,8 @@ const L = (() => {
         VZ: st * RM + Math.sin(ventAng) * ventD,
         R_V: 1.5,                              // magma vent radius
         VENT_ANG: ventAng,
+        // item 397: seeded lazy-bend/oxbow belly on course B (see riverAt below)
+        OXBOW: hasOxbow, U_OXBOW: oxbowU, OXBOW_WIDTH: oxbowWidth, OXBOW_SPREAD: oxbowSpread,
     };
 })();
 
@@ -150,6 +170,11 @@ export const WATERFALL = {
     lipX: L.ct * (L.RM - 3.5 - L.R_B), lipZ: L.st * (L.RM - 3.5 - L.R_B),
     poolX: L.ct * L.U_FALL, poolZ: L.st * L.U_FALL,
 };
+
+// item 397: this seed's river-course oxbow/lazy-bend descriptor (present:
+// false on most seeds — see the L IIFE above and riverAt()'s wWater bulge).
+// ?probe-visible so a test can confirm it differs across seeds.
+export const OXBOW = { present: L.OXBOW, u: L.U_OXBOW, width: L.OXBOW_WIDTH };
 
 /* ------------------------------------------------------------
    River field — two courses. Each centerline leaves the pond and
@@ -206,6 +231,15 @@ export function riverAt(x, z) {
             const lat = Math.abs(v - riverCenterB(u));
             let wWater = CONFIG.RIVER_WIDTH + Math.sin(u * 0.15 + L.BPW) * 0.45;
             wWater += 2.8 * smoothstep(u, L.U_B_POOL - 4.5, L.U_B_POOL);   // plunge pool bulge
+            // item 397: seeded oxbow-like lazy-bend belly (see the L IIFE above)
+            // — a localized gaussian width bulge on seeds that roll one; purely
+            // additive to the SAME wWater every other rule here already feeds
+            // into wBank/lat/t/bed/isWaterAt, so fords/patrols/spawning need no
+            // changes at all to respect it.
+            if (L.OXBOW) {
+                const dU = u - L.U_OXBOW;
+                wWater += L.OXBOW_WIDTH * Math.exp(-(dU * dU) / (2 * L.OXBOW_SPREAD * L.OXBOW_SPREAD));
+            }
             const wBank = wWater + CONFIG.RIVER_BANK;
             if (lat < wBank) {
                 const ford = Math.max(fordK(u, L.FORD1), fordK(u, L.FORD2));
