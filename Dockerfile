@@ -3,7 +3,7 @@
 # resolves from the jsdelivr CDN via the importmap in those two files. There
 # is no npm install/build step for the shipped game — nginx just serves the
 # files as-is.
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 
 COPY index.html /usr/share/nginx/html/index.html
 COPY test.html /usr/share/nginx/html/test.html
