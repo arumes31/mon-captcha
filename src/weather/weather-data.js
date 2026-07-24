@@ -70,3 +70,13 @@ export const WEATHER_BIAS = {
 };
 
 export const WEATHER_DEFAULT_BIAS = [['clear', 4], ['overcast', 2], ['windy', 1], ['rain', 1], ['fog', 1]];
+
+// States allowed on the 'low' quality tier: sky/fog/lighting recipes only, no
+// precipitation particle systems (rain streaks / snow points / lightning).
+// 'low' used to force weather permanently to 'clear' — reasonable when it was
+// a rare fallback for a device that had visibly struggled, but gpu-detect.js
+// now seeds 'low' immediately for any confirmed software renderer, making it
+// the default starting tier for a lot of real traffic. Zones still read
+// visibly different (a swamp stays foggier, a snow zone stays overcast more
+// often) without paying for particles.
+export const WEATHER_LOW_TIER_STATES = new Set(['clear', 'overcast', 'windy', 'fog']);

@@ -1,15 +1,15 @@
 # Example compose file for the 3D Voxel CAPTCHA static site.
 #
-#   docker compose up -d        # pulls ghcr.io/arumes31/3dcaptcha:latest
+#   docker compose up -d        # pulls ghcr.io/arumes31/mon-captcha:latest
 #   docker compose up -d --build   # builds from the local Dockerfile instead
 #
 # Adjust the `image:` below if this repo lives under a different GitHub
-# owner/name than arumes31/3dcaptcha — it must match ${{ github.repository }}
+# owner/name than arumes31/mon-captcha — it must match ${{ github.repository }}
 # from .github/workflows/docker-ghcr.yml, lowercased.
 services:
   web:
-    image: ghcr.io/arumes31/3dcaptcha:latest
-    container_name: 3dcaptcha
+    image: ghcr.io/arumes31/mon-captcha:latest
+    container_name: mon-captcha
     build:
       context: .
       dockerfile: Dockerfile

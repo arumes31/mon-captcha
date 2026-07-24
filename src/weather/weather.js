@@ -16,20 +16,22 @@
        delayed one-shot synth thunder (audio.js)
      - a wind-gust level published to state.weatherWind (+ dir) so
        the flora sway and drifting motes stiffen during gusts
-   Quality: low tier stays clear / minimal (no precip, no flash).
+   Quality: 'low' tier still varies sky/fog/mood by zone (rollNext() restricts
+   it to WEATHER_LOW_TIER_STATES) — just never lands on rain/snowfall/
+   thunderstorm, so there's no precip particles or lightning to pay for.
    Gesture-independent (visual), but thunder respects the audio
    gate. forceWeather()/weatherState() are ?probe hooks.
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { mulberry32 } from './random.js';
-import { isWaterAt } from './heightfield.js';
-import { zoneAt } from './zones.js';
-import { spawnWaterRipple } from './particles.js';
-import { playThunder } from './audio.js';
-import { WEATHER_STATES, WEATHER_BIAS, WEATHER_DEFAULT_BIAS } from './weather-data.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { mulberry32 } from '../random.js';
+import { isWaterAt } from '../heightfield.js';
+import { zoneAt } from '../zones/zones.js';
+import { spawnWaterRipple } from '../particles.js';
+import { playThunder } from '../audio.js';
+import { WEATHER_STATES, WEATHER_BIAS, WEATHER_DEFAULT_BIAS, WEATHER_LOW_TIER_STATES } from './weather-data.js';
 
 const RAIN_MAX = 1200;
 const SNOW_MAX = 1500;
@@ -137,6 +139,13 @@ function rollNext() {
             if (z && WEATHER_BIAS[z.id]) table = WEATHER_BIAS[z.id];
         }
     } catch (e) {}
+    // 'low' tier: still zone-biased, just restricted to the non-precip states
+    // (see WEATHER_LOW_TIER_STATES) so the sky/fog/mood keeps varying by zone
+    // without paying for rain/snow particles or lightning.
+    if (state.qualityLevel === 'low') {
+        const filtered = table.filter(([s]) => WEATHER_LOW_TIER_STATES.has(s));
+        table = filtered.length ? filtered : WEATHER_DEFAULT_BIAS.filter(([s]) => WEATHER_LOW_TIER_STATES.has(s));
+    }
     let total = 0;
     for (const [, w] of table) total += w;
     let roll = W.rng() * total;
@@ -163,10 +172,13 @@ export function forceLightning() { W.flashK = 1.0; W.strikeCd = 3; }
    ------------------------------------------------------------ */
 export function updateWeather(dt, elapsed) {
     if (!W.base || !state.scene) return;
-    const low = state.qualityLevel === 'low';
 
-    // ---- schedule / advance the blend (paused while forced, low, or unlocked-pause) ----
-    if (!W.forced && !low) {
+    // ---- schedule / advance the blend (paused while forced) ----
+    // 'low' tier used to pause here too (permanently holding 'clear'); it now
+    // schedules normally — rollNext() itself restricts which states a 'low'
+    // roll can land on (see WEATHER_LOW_TIER_STATES), so it never picks
+    // anything precipitation-heavy, but the sky/fog/mood still varies by zone.
+    if (!W.forced) {
         W.time += dt;
         if (W.t < 1) {
             W.t = Math.min(1, W.t + dt / BLEND_DUR);
@@ -179,11 +191,9 @@ export function updateWeather(dt, elapsed) {
     }
 
     // ---- blended parameters ----
-    const A = WEATHER_STATES[W.cur] || WEATHER_STATES.clear;
-    const B = WEATHER_STATES[W.nxt] || A;
-    const t = low ? 0 : W.t;              // low tier holds clear
-    const Aw = low ? WEATHER_STATES.clear : A;
-    const Bw = low ? WEATHER_STATES.clear : B;
+    const Aw = WEATHER_STATES[W.cur] || WEATHER_STATES.clear;
+    const Bw = WEATHER_STATES[W.nxt] || Aw;
+    const t = W.t;
     const P = {
         fogMul: lerp(Aw.fogMul, Bw.fogMul, t), sunMul: lerp(Aw.sunMul, Bw.sunMul, t),
         hemiMul: lerp(Aw.hemiMul, Bw.hemiMul, t), skyFillMul: lerp(Aw.skyFillMul, Bw.skyFillMul, t),
@@ -236,9 +246,9 @@ function applyEnvironment(P, flash) {
         // current fog colour target = blend of the two states' fogColor
         const A = WEATHER_STATES[W.cur] || WEATHER_STATES.clear;
         const B = WEATHER_STATES[W.nxt] || A;
-        _cB.setHex((state.qualityLevel === 'low') ? WEATHER_STATES.clear.fogColor : A.fogColor);
-        _cC.setHex((state.qualityLevel === 'low') ? WEATHER_STATES.clear.fogColor : B.fogColor);
-        _cB.lerp(_cC, state.qualityLevel === 'low' ? 0 : W.t);
+        _cB.setHex(A.fogColor);
+        _cC.setHex(B.fogColor);
+        _cB.lerp(_cC, W.t);
         if (flash > 0.01) _cB.lerp(_cA.setHex(0xf5f7ff), Math.min(0.6, flash));
         if (fx.fogK > 0) { // localized cave haze, restored automatically as fogK → 0 outside
             dens += (fx.fogDensity - dens) * fx.fogK;

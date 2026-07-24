@@ -43,9 +43,9 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { spawnParticleBurst, spawnWaterRipple } from './particles.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { spawnParticleBurst, spawnWaterRipple } from '../particles.js';
 import { pushAux } from './caves-decor.js';
 
 const STREAM_DEPTH = 0.16;                 // shallow, gentle wade depth for streams

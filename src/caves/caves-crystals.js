@@ -18,7 +18,7 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { getGroundY } from './heightfield.js';
+import { getGroundY } from '../heightfield.js';
 import { pushAux, buildGeoInstances, emissiveMaterial, perpAt } from './caves-decor.js';
 
 // base geometries (each mesh gets its OWN cloned geo so the core teardown can

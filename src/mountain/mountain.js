@@ -15,12 +15,12 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { mulberry32 } from './random.js';
-import { getTerrainHeight, getGroundY, getBasinLevel, getVentFloor, WATERFALL, BASIN, VENT, BORDER_FALL } from './heightfield.js';
-import { spawnParticleBurst, spawnWaterRipple } from './particles.js';
-import { startWaterfallLoop, setWaterfallVolume } from './audio.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { mulberry32 } from '../random.js';
+import { getTerrainHeight, getGroundY, getBasinLevel, getVentFloor, WATERFALL, BASIN, VENT, BORDER_FALL } from '../heightfield.js';
+import { spawnParticleBurst, spawnWaterRipple } from '../particles.js';
+import { startWaterfallLoop, setWaterfallVolume } from '../audio.js';
 
 /* ------------------------------------------------------------
    Build — called from buildTerrain (step 5.5)

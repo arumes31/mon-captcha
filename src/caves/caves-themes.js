@@ -29,7 +29,7 @@
    ============================================================ */
 
 import { registerCaveTheme, zoneGlowHue } from './caves-registry.js';
-import { state } from './state.js';
+import { state } from '../state.js';
 import { DecorKit, initDecor, updateDecor, disposeDecor } from './caves-decor.js';
 import { dressRockBase, addOreVeins, addFossils, addFissures, addWetGloss, addGuano } from './caves-rock.js';
 import { addHeroCrystal, addGeodes, addSelenite, addAmethyst, addSingingCrystal, addChamberChimes } from './caves-crystals.js';

@@ -35,11 +35,11 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { mulberry32, worldNoise } from './random.js';
-import { getGroundY, CAVES } from './heightfield.js';
-import { spawnWaterRipple } from './particles.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { mulberry32, worldNoise } from '../random.js';
+import { getGroundY, CAVES } from '../heightfield.js';
+import { spawnWaterRipple } from '../particles.js';
 import { getCaveThemeDescriptor, caveTierProfile, zoneGlowHue } from './caves-registry.js';
 import { themeBuildLog, resetThemeBuildLog } from './caves-themes.js'; // installs the 6 theme packs (side effect)
 import { buildTopoRock, buildTopoWater } from './caves-features.js'; // Phase 2f topology dressing

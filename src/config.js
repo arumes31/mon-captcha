@@ -166,6 +166,19 @@ export const CONFIG = {
     // world nobody is looking at.
     IDLE_UPDATE_FPS: 8,
 
+    // Shadow frustum half-extent, in world units, RECENTERED ON THE PLAYER
+    // every frame (see engine.js's updateSunFollow) rather than fixed at the
+    // full ARENA_SIZE around world origin. A frustum this size still comfortably
+    // covers everything shadow-relevant near the player (CAPTURE_RANGE=12) while
+    // excluding the rest of the ~100-unit-radius arena from the shadow pass —
+    // this was the single biggest per-frame draw-call cost found while
+    // investigating "frame drops every few meters / at cave entrances": with a
+    // static ±ARENA_SIZE frustum, virtually every shadow-casting object in the
+    // whole world (all ~75 non-instanced multi-part creatures included) was
+    // being resubmitted to the shadow depth pass every frame regardless of
+    // camera position.
+    SHADOW_FOLLOW_RADIUS: 45,
+
     // Quality
     SHADOW_MAP_HIGH: 2048,
     SHADOW_MAP_MED: 1024,

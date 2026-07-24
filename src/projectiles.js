@@ -21,7 +21,7 @@ import { makeCaptureBall, makeBallGlowSprite, removeBall } from './ball.js';
 import { requestThrow } from './viewmodel.js';
 import { beginCatchSequence } from './capture.js';
 import { showBackBonusFlourish } from './targeting.js';
-import { caveRicochet, caveThrowUpAngle, tunnelBackDot } from './caves-gameplay.js';
+import { caveRicochet, caveThrowUpAngle, tunnelBackDot } from './caves/caves-gameplay.js';
 
 export function tryCapture() {
     if (state.isCaptchaSolved || state.isPaused) return;

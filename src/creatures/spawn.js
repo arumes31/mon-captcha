@@ -18,7 +18,7 @@ import { collidesObstacle } from '../player.js';
 import { PLAN_META } from './plans.js';
 import { CREATURE_TYPES } from './bestiary.js';
 import { makeCreature } from './factory.js';
-import { ZONES } from '../zones.js';
+import { ZONES } from '../zones/zones.js';
 import { spawnCaveLife } from './cave-spawn.js';
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];

@@ -9,12 +9,12 @@ import { state } from './state.js';
 import { mulberry32, worldNoise } from './random.js';
 import { getTerrainHeight, isWaterAt, MOUNTAINS, VENT, CAVES, sampleCave } from './heightfield.js';
 import { SUN_DIRECTION } from './engine.js';
-import { zoneBlendAt } from './zones.js';
-import { buildFlora } from './flora.js';
+import { zoneBlendAt } from './zones/zones.js';
+import { buildFlora } from './flora/flora.js';
 import { buildClouds, buildAmbientLife, buildPointsOfInterest, buildZoneAmbient } from './atmosphere.js';
-import { buildMountainFeatures } from './mountain.js';
+import { buildMountainFeatures } from './mountain/mountain.js';
 import { buildLava } from './lava.js';
-import { buildCaves } from './caves.js';
+import { buildCaves } from './caves/caves.js';
 import { buildChunkedInstances, primeOcclusion } from './culling.js';
 
 // Snow line per mountain (set from each massif's actual peak height in

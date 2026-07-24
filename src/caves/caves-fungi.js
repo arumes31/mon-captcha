@@ -19,7 +19,7 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { getGroundY } from './heightfield.js';
+import { getGroundY } from '../heightfield.js';
 import { pushAux, buildBoxInstances, buildGeoInstances, matteMaterial, emissiveMaterial, perpAt, vaultY, mouthDist, inPool } from './caves-decor.js';
 
 function deepestChamber(cave) {

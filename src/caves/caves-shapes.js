@@ -19,7 +19,7 @@
    the base placement / wet / theme streams are untouched.
    ============================================================ */
 
-import { CONFIG } from './config.js';
+import { CONFIG } from '../config.js';
 
 const TAU = Math.PI * 2;
 const MIN_HW = CONFIG.CAVE_MIN_NAV_HW; // Phase 2m: never narrow a walkable node below this

@@ -34,10 +34,10 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { mulberry32 } from './random.js';
-import { CAVES, caveAt, getGroundY } from './heightfield.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { mulberry32 } from '../random.js';
+import { CAVES, caveAt, getGroundY } from '../heightfield.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);

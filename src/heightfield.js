@@ -28,10 +28,10 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { worldNoise, mulberry32 } from './random.js';
-import { makePartition } from './zones-data.js';
-import { placeCaves } from './caves-data.js';
-import { caveWaterIsWater, caveWaterCarveH, caveWaterLevelAt, caveWetEdgeOne } from './caves-water.js';
-import { placeMountains, mountainRise } from './mountains-data.js';
+import { makePartition } from './zones/zones-data.js';
+import { placeCaves } from './caves/caves-data.js';
+import { caveWaterIsWater, caveWaterCarveH, caveWaterLevelAt, caveWetEdgeOne } from './caves/caves-water.js';
+import { placeMountains, mountainRise } from './mountain/mountains-data.js';
 
 const lerp = THREE.MathUtils.lerp;
 const smoothstep = THREE.MathUtils.smoothstep;

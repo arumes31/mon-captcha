@@ -38,8 +38,8 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { state } from './state.js';
-import { CAVES, caveAt, isWaterAt, caveSlippery } from './heightfield.js';
+import { state } from '../state.js';
+import { CAVES, caveAt, isWaterAt, caveSlippery } from '../heightfield.js';
 
 /* ---- tuning (all deliberately quiet) ---- */
 const CAVE_MASTER = 0.85;   // dry cave-bed bus level

@@ -19,7 +19,7 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { getGroundY } from './heightfield.js';
+import { getGroundY } from '../heightfield.js';
 import { perpAt, springY, mouthDist, inPool } from './caves-decor.js';
 
 const _c = new THREE.Color();

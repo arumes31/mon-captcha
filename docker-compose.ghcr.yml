@@ -1,0 +1,20 @@
+# Deployment-only example: pulls the published GHCR image, no local Dockerfile
+# build involved. Use this when you just want to run the shipped image.
+#
+#   docker compose -f docker-compose.ghcr.yml up -d
+#   docker compose -f docker-compose.ghcr.yml pull   # update to the latest push to main
+#
+# (For a local-build workflow instead, use the default docker-compose.yml.)
+services:
+  web:
+    image: ghcr.io/arumes31/mon-captcha:latest
+    container_name: mon-captcha
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

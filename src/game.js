@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { state } from './state.js';
-import { buildEngine } from './engine.js';
+import { buildEngine, updateSunFollow } from './engine.js';
 import { buildTerrain } from './terrain.js';
 import { updateEnvironmentAnim } from './atmosphere.js';
 import { setupPlayer, onKeyDown, onKeyUp, updatePlayer } from './player.js';
@@ -18,26 +18,26 @@ import { initViewmodel, updateViewmodel, disposeViewmodel } from './viewmodel.js
 import { initTargeting, updateTargeting, disposeTargeting } from './targeting.js';
 import { removeBall, disposeBallCaches } from './ball.js';
 import { initTouchControls, updateTouchControls, disposeTouchControls } from './touch-controls.js';
-import { updateMountainFeatures, disposeMountainFeatures } from './mountain.js';
+import { updateMountainFeatures, disposeMountainFeatures } from './mountain/mountain.js';
 import { updateLava, disposeLava } from './lava.js';
-import { updateCaves, disposeCaves } from './caves.js';
-import { updateCaveAtmos } from './caves-atmos.js';
-import { updateCaveLight } from './caves-light.js';
-import { initCaveGameplay, updateCaveGameplay, disposeCaveGameplay, caveCaptureBonus, tunnelBackDot, atDeadEnd, caveDeadEnds, caveDeepPoint, triggerCaveCollapse, caveRicochet, caveThrowUpAngle } from './caves-gameplay.js';
+import { updateCaves, disposeCaves } from './caves/caves.js';
+import { updateCaveAtmos } from './caves/caves-atmos.js';
+import { updateCaveLight } from './caves/caves-light.js';
+import { initCaveGameplay, updateCaveGameplay, disposeCaveGameplay, caveCaptureBonus, tunnelBackDot, atDeadEnd, caveDeadEnds, caveDeepPoint, triggerCaveCollapse, caveRicochet, caveThrowUpAngle } from './caves/caves-gameplay.js';
 import { initParticles, updateParticles, updateWaterRipples } from './particles.js';
 import { updateCulling, disposeChunked } from './culling.js';
 import { perfSample, perfInstanceTotal, perfDrawnInstances } from './perf.js';
 import { initAudio } from './audio.js';
 import { initMusic, musicSetActive, disposeMusic, musicCurrentMood } from './music.js';
-import { initCaveAudio, updateCaveAudio, caveAudioSetActive, stopCaveAudio, disposeCaveAudio, caveAudioStats } from './caves-audio.js';
+import { initCaveAudio, updateCaveAudio, caveAudioSetActive, stopCaveAudio, disposeCaveAudio, caveAudioStats } from './caves/caves-audio.js';
 import { initQuality, recordFps } from './quality.js';
 import { ui, cacheUI, updateCounterUI, showClickToPlay, showPauseOverlay, disposeHintToast } from './ui.js';
-import { zoneAt, ZONES } from './zones.js';
+import { zoneAt, ZONES } from './zones/zones.js';
 import { PARTITION, SPAWN, MOUNTAIN, MOUNTAINS, VENT, CAVES, caveAt, sampleCave, caveConfine, caveCeilingAt, getTerrainHeight, getGroundY, isWaterAt, getWaterLevelAt, getWaterDepth, caveSlippery, riverAt, riverPointAt, riverSpan, BORDER_FALL } from './heightfield.js';
 import { LAVA, lavaAt } from './lava.js';
-import { forceWeather, forceLightning, weatherState, updateWeather, initWeather, disposeWeather } from './weather.js';
-import { CAVE_THEMES, getCaveThemeDescriptor, caveThemeRegistered, registeredCaveThemes } from './caves-registry.js';
-import { themeBuildLog } from './caves-themes.js';
+import { forceWeather, forceLightning, weatherState, updateWeather, initWeather, disposeWeather } from './weather/weather.js';
+import { CAVE_THEMES, getCaveThemeDescriptor, caveThemeRegistered, registeredCaveThemes } from './caves/caves-registry.js';
+import { themeBuildLog } from './caves/caves-themes.js';
 
 /* ============================================================
    Game Animation Loop
@@ -71,6 +71,7 @@ function animate() {
 
     const elapsed = now / 1000;
     updatePlayer(dt);
+    updateSunFollow(state.camera);
     updateTouchControls();
     updateCreatures(dt, elapsed);
     updateProjectiles(dt);

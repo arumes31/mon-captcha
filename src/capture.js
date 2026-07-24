@@ -23,11 +23,11 @@ import { getGroundY, isWaterAt, getWaterLevelAt, findDryLand, caveAt } from './h
 import { spawnParticleBurst, spawnTrailMote, spawnWaterRipple } from './particles.js';
 import { playPop, playThump, playSplash, playWobbleTick, playSuccessChime, playBreakout } from './audio.js';
 import { stopMusic } from './music.js';
-import { stopCaveAudio } from './caves-audio.js';
+import { stopCaveAudio } from './caves/caves-audio.js';
 import { foldCapture, validateCaptureHash, generateToken } from './security.js';
 import { showCaptureToast, updateCounterUI, showSuccessModal } from './ui.js';
 import { makeFlashSprite, removeBall } from './ball.js';
-import { caveCaptureBonus, maybeCollapse } from './caves-gameplay.js';
+import { caveCaptureBonus, maybeCollapse } from './caves/caves-gameplay.js';
 
 const DUST = 0xcaa87a;              // sandy puff for ground wobbles
 const GOLD = 0xffd75e;              // success stars

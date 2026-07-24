@@ -32,11 +32,11 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state, reuse } from './state.js';
-import { mulberry32 } from './random.js';
-import { CAVES, getGroundY, caveCeilingAt } from './heightfield.js';
-import { inLavaFootprint } from './lava.js';
+import { CONFIG } from '../config.js';
+import { state, reuse } from '../state.js';
+import { mulberry32 } from '../random.js';
+import { CAVES, getGroundY, caveCeilingAt } from '../heightfield.js';
+import { inLavaFootprint } from '../lava.js';
 
 const LANTERN_BASE = 6.5;    // warm point-light intensity inside (decay 2) — a POOL
                              // of near light that falls off fast, so deep chambers

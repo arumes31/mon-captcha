@@ -16,7 +16,7 @@ import { CONFIG } from './config.js';
 import { state, reuse } from './state.js';
 import { ui } from './ui.js';
 import { getGroundY } from './heightfield.js';
-import { caveCaptureBonus, tunnelBackDot, captureUiTags } from './caves-gameplay.js';
+import { caveCaptureBonus, tunnelBackDot, captureUiTags } from './caves/caves-gameplay.js';
 
 const TIER_COLORS = { common: '#9aa5b1', uncommon: '#4ade80', rare: '#7db2ff', legendary: '#ffd75e' };
 const RING_SURE = new THREE.Color(0x5ff0d0);   // ~100% — Palworld cyan

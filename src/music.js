@@ -19,7 +19,7 @@
    ============================================================ */
 
 import { state } from './state.js';
-import { zoneAt } from './zones.js';
+import { zoneAt } from './zones/zones.js';
 import { caveAt } from './heightfield.js';
 
 const MASTER_GAIN = 0.16;

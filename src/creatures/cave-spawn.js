@@ -17,10 +17,10 @@
 
 import { CONFIG } from '../config.js';
 import { CAVES, getGroundY, caveCeilingAt } from '../heightfield.js';
-import { getCaveThemeDescriptor } from '../caves-registry.js';
+import { getCaveThemeDescriptor } from '../caves/caves-registry.js';
 import { CREATURE_TYPES } from './bestiary.js';
 import { makeRecord } from './spawn.js';
-import { caveDeadEnds, caveDeepPoint } from '../caves-gameplay.js';
+import { caveDeadEnds, caveDeepPoint } from '../caves/caves-gameplay.js';
 
 const byId = (id) => CREATURE_TYPES.find(t => t.id === id);
 

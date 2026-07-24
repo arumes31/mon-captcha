@@ -115,10 +115,12 @@ export function buildEngine(container) {
     const sun = new THREE.DirectionalLight(0xffd6a0, 3.6); // warm golden sun, strong but not scorching
     sun.position.copy(SUN_DIRECTION).multiplyScalar(60);
     sun.castShadow = true;
-    sun.shadow.camera.left = -CONFIG.ARENA_SIZE;
-    sun.shadow.camera.right = CONFIG.ARENA_SIZE;
-    sun.shadow.camera.top = CONFIG.ARENA_SIZE;
-    sun.shadow.camera.bottom = -CONFIG.ARENA_SIZE;
+    // Small frustum, RECENTERED ON THE PLAYER every frame by updateSunFollow()
+    // below — not the whole arena. See CONFIG.SHADOW_FOLLOW_RADIUS for why.
+    sun.shadow.camera.left = -CONFIG.SHADOW_FOLLOW_RADIUS;
+    sun.shadow.camera.right = CONFIG.SHADOW_FOLLOW_RADIUS;
+    sun.shadow.camera.top = CONFIG.SHADOW_FOLLOW_RADIUS;
+    sun.shadow.camera.bottom = -CONFIG.SHADOW_FOLLOW_RADIUS;
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 160;
     sun.shadow.bias = -0.0002;
@@ -146,4 +148,18 @@ export function applyShadowMapSize(size) {
         state.sun.shadow.map = null;
     }
     state.sun.shadow.needsUpdate = true;
+}
+
+// Recenters the (small, CONFIG.SHADOW_FOLLOW_RADIUS-wide) shadow frustum on
+// the player every frame — keeps the sun's DIRECTION fixed (just offsets
+// position/target by the same SUN_DIRECTION vector the player is standing at),
+// so lighting angle/mood never changes, only which slice of the world falls
+// inside the shadow pass. Only a transform update (no projection-matrix
+// recompute needed — the frustum's own bounds never change size, just
+// position), so this is cheap enough to run unconditionally every frame.
+export function updateSunFollow(camera) {
+    const sun = state.sun;
+    if (!sun || !camera) return;
+    sun.target.position.copy(camera.position);
+    sun.position.copy(camera.position).addScaledVector(SUN_DIRECTION, 60);
 }

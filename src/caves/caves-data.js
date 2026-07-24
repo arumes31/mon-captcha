@@ -26,8 +26,8 @@
    with no import cycle.
    ============================================================ */
 
-import { CONFIG } from './config.js';
-import { mulberry32 } from './random.js';
+import { CONFIG } from '../config.js';
+import { mulberry32 } from '../random.js';
 import { DRY_CAVE_THEMES } from './caves-registry.js';
 import { designFloodedWater } from './caves-water.js';
 import {

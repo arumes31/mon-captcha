@@ -12,7 +12,7 @@
    on the bat / fungal / flooded themes.
    ============================================================ */
 
-import { getGroundY } from './heightfield.js';
+import { getGroundY } from '../heightfield.js';
 
 export function addNests(kit, cave, ctx, eggHue = 0xe0d6c2) {
     const { rng, profile } = ctx, ds = profile.densityScale;

@@ -32,13 +32,13 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { CAVES, sampleCave, caveCeilingAt, getGroundY } from './heightfield.js';
-import { spawnParticleBurst } from './particles.js';
-import { playRicochet, playRockRumble, playCaveBallPickup } from './audio.js';
-import { makeCaptureBall, makeFlashSprite, removeBall } from './ball.js';
-import { showHintToast } from './ui.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { CAVES, sampleCave, caveCeilingAt, getGroundY } from '../heightfield.js';
+import { spawnParticleBurst } from '../particles.js';
+import { playRicochet, playRockRumble, playCaveBallPickup } from '../audio.js';
+import { makeCaptureBall, makeFlashSprite, removeBall } from '../ball.js';
+import { showHintToast } from '../ui.js';
 
 const DUST = 0xb59a72;
 

@@ -1,4 +1,4 @@
-# 3D Voxel CAPTCHA — QA harness (`tests/`)
+# Monster CAPTCHA — QA harness (`tests/`)
 
 Local, in-repo test tooling. Formalized in **Phase 4a** of EXPANSION PROGRAM III
 (see `docs/plans/2026-07-16-expansion-plan.md`) so that every later phase inherits

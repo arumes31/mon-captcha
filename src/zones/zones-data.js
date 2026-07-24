@@ -23,8 +23,8 @@
    set, and a CREATURE spawn-bias list (ids from the bestiary).
    ============================================================ */
 
-import { CONFIG } from './config.js';
-import { worldNoise, mulberry32 } from './random.js';
+import { CONFIG } from '../config.js';
+import { worldNoise, mulberry32 } from '../random.js';
 
 // species tags dispatch to flora builders:
 //   oak/birch/fruit/weeping/autumn/gray -> broadleaf addTree

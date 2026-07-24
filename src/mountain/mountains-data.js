@@ -20,7 +20,7 @@
    for the primary it reproduces the old inline cone EXACTLY.
    ============================================================ */
 
-import { worldNoise, mulberry32 } from './random.js';
+import { worldNoise, mulberry32 } from '../random.js';
 
 // Smallest signed angular difference a-b in (-PI, PI].
 function angDiff(a, b) {

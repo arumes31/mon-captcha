@@ -15,9 +15,9 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { getTerrainHeight } from './heightfield.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { getTerrainHeight } from '../heightfield.js';
 
 // Leaf palettes per broadleaf species
 export const TREE_LEAF_PALETTES = {

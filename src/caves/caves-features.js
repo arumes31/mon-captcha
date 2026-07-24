@@ -17,9 +17,9 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { getGroundY } from './heightfield.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { getGroundY } from '../heightfield.js';
 
 const V = CONFIG.VOXEL_SIZE;
 

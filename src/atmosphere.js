@@ -19,7 +19,7 @@ function inCaveFootprint(x, z) {
     const cf = sampleCave(x, z);
     return !!cf && cf.lat < cf.hw + 1.1;
 }
-import { zoneAt } from './zones.js';
+import { zoneAt } from './zones/zones.js';
 
 // Voxel-style clouds: two flat semi-transparent layers drifting at different
 // speeds for cheap parallax. Low clouds catch a faint sunset blush.

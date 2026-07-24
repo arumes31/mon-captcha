@@ -13,7 +13,7 @@
    soft, noise-dithered borders instead of snapping.
    ============================================================ */
 
-import { PARTITION } from './heightfield.js';
+import { PARTITION } from '../heightfield.js';
 import { ZONE_DEFS, ZONE_BY_ID } from './zones-data.js';
 
 export { ZONE_DEFS, ZONE_BY_ID };

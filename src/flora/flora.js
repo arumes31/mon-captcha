@@ -12,11 +12,11 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { mulberry32, worldNoise } from './random.js';
-import { getTerrainHeight, isWaterAt, findDryLand, riverAt, riverPointAt, riverSpan, SPAWN, sampleCave } from './heightfield.js';
-import { inLavaFootprint } from './lava.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { mulberry32, worldNoise } from '../random.js';
+import { getTerrainHeight, isWaterAt, findDryLand, riverAt, riverPointAt, riverSpan, SPAWN, sampleCave } from '../heightfield.js';
+import { inLavaFootprint } from '../lava.js';
 
 // Ground where no plants grow: a cave tunnel footprint (the caves module owns
 // all interior dressing — its floor is carved bare rock) OR the lava river /
@@ -27,7 +27,7 @@ function inCaveFootprint(x, z) {
     if (cf && cf.lat < cf.hw + 1.1) return true;
     return inLavaFootprint(x, z);
 }
-import { zoneAt } from './zones.js';
+import { zoneAt } from '../zones/zones.js';
 import { addSpecies, speciesRadius } from './flora-trees.js';
 
 // Pick a species from a zone's weighted [species, weight] table

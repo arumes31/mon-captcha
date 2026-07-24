@@ -23,10 +23,10 @@
    ============================================================ */
 
 import * as THREE from 'three';
-import { CONFIG } from './config.js';
-import { state } from './state.js';
-import { spawnParticleBurst } from './particles.js';
-import { playCrystalChime, playSingingCrystal, playSporePoof } from './audio.js';
+import { CONFIG } from '../config.js';
+import { state } from '../state.js';
+import { spawnParticleBurst } from '../particles.js';
+import { playCrystalChime, playSingingCrystal, playSporePoof } from '../audio.js';
 
 export const V = CONFIG.VOXEL_SIZE;
 export const SC = 1 / V;                 // world units -> sharedBoxGeo instance scale
