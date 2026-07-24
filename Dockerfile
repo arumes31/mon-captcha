@@ -1,4 +1,4 @@
-# 3D Voxel CAPTCHA — static, buildless site.
+# Monster CAPTCHA — static, buildless site.
 # index.html/test.html load main.js as a native ES module; three.js itself
 # resolves from the jsdelivr CDN via the importmap in those two files. There
 # is no npm install/build step for the shipped game — nginx just serves the

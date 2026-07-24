@@ -1,4 +1,4 @@
-# Example compose file for the 3D Voxel CAPTCHA static site.
+# Example compose file for the Monster CAPTCHA static site.
 #
 #   docker compose up -d        # pulls ghcr.io/arumes31/mon-captcha:latest
 #   docker compose up -d --build   # builds from the local Dockerfile instead
