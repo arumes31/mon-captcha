@@ -12,6 +12,8 @@ import { state } from './state.js';
 import { mulberry32 } from './random.js';
 import { getTerrainHeight, findDryLand, sampleCave } from './heightfield.js';
 import { chunkSetMatrix, chunkFlushDirty } from './culling.js';
+import { spawnWaterRipple } from './particles.js';
+import { buildCloudShadows, updateCloudShadows, buildGroundDecals, updateGroundDecals, buildPoiDetails, updatePoiDetails } from './atmosphere-fx.js';
 
 // Cave interiors get no outdoor ambience (snow/pollen indoors reads wrong);
 // the caves module owns its own drip motes.
@@ -36,24 +38,34 @@ export function buildClouds() {
 
     state.cloudLayers = [];
     const dummy = new THREE.Object3D();
+    // item 8/442: track the biggest clusters' centroids so a handful can cast
+    // soft shadow blobs onto the terrain below (see atmosphere-fx.js).
+    const shadowCentroids = [];
+    let layerIdx = 0;
     for (const layer of layers) {
         const cloudInstances = [];
         for (let i = 0; i < layer.count; i++) {
             const cx = (r() * 2 - 1) * layer.spread;
             const cz = (r() * 2 - 1) * layer.spread;
             const cy = layer.yMin + r() * layer.ySpan;
-            const w = 5 + Math.floor(r() * 6);
-            const d = 3 + Math.floor(r() * 4);
+            // item 438: a few cluster "shapes" beyond one repeated puff — a
+            // wider/flatter streaky profile and a taller layered-stack profile,
+            // alongside the original round puff, picked per cluster.
+            const profile = r();
+            const w = profile < 0.35 ? 7 + Math.floor(r() * 5) : 5 + Math.floor(r() * 6);
+            const d = profile < 0.35 ? 2 + Math.floor(r() * 2) : 3 + Math.floor(r() * 4);
+            const stacked = profile > 0.8;
             for (let x = 0; x < w; x++) {
                 for (let z = 0; z < d; z++) {
                     if (r() < 0.72) {
                         cloudInstances.push({
-                            x: cx + x * V_STEP * layer.block, y: cy + (r() < 0.25 ? 0.5 : 0), z: cz + z * V_STEP * layer.block,
-                            sx: layer.block, sy: 0.5, sz: layer.block
+                            x: cx + x * V_STEP * layer.block, y: cy + (r() < 0.25 || stacked ? 0.5 : 0), z: cz + z * V_STEP * layer.block,
+                            sx: layer.block, sy: stacked ? 0.85 : 0.5, sz: layer.block
                         });
                     }
                 }
             }
+            if (layerIdx === 0) shadowCentroids.push({ x: cx + (w * V_STEP * layer.block) / 2, z: cz + (d * V_STEP * layer.block) / 2, layer: layerIdx });
         }
         // Unlit material: clouds read as bright sunlit puffs from any angle
         // (a lit material shows its dark underside against the bright sky)
@@ -74,8 +86,16 @@ export function buildClouds() {
         }
         cloudMesh.instanceMatrix.needsUpdate = true;
         state.scene.add(cloudMesh);
-        state.cloudLayers.push({ mesh: cloudMesh, driftSpeed: layer.driftSpeed, driftAmp: layer.driftAmp, phase: r() * Math.PI * 2 });
+        // baseColor/baseOpacity captured once — updateEnvironmentAnim retints
+        // toward the current fog colour + darkens under stormy weather (items
+        // 11/200/208/439/444) without ever mutating this original recipe.
+        state.cloudLayers.push({
+            mesh: cloudMesh, driftSpeed: layer.driftSpeed, driftAmp: layer.driftAmp, phase: r() * Math.PI * 2,
+            baseColor: new THREE.Color(layer.color), baseOpacity: layer.opacity,
+        });
+        layerIdx++;
     }
+    buildCloudShadows(shadowCentroids);
 }
 
 // Small radial-gradient sprite so firefly points render as soft glow dots
@@ -104,18 +124,29 @@ export function buildAmbientLife() {
     const half = CONFIG.ARENA_SIZE / 2;
 
     // --- Fireflies / sunlit pollen motes (additive points; bloom catches them)
+    // item 459: the last HOTSPOT_COUNT are clustered tightly around one fixed
+    // spot instead of scattered arena-wide — a small collectible-feeling
+    // "firefly-swarm" point of interest rather than more uniform ambiance.
     const FLY_COUNT = 80;
+    const HOTSPOT_COUNT = 10;
+    const hotspotAng = r() * Math.PI * 2, hotspotR = (half - 8) * 0.55;
+    const hotspotX = Math.cos(hotspotAng) * hotspotR, hotspotZ = Math.sin(hotspotAng) * hotspotR;
     const flyBase = new Float32Array(FLY_COUNT * 3);
     const flyPhase = new Float32Array(FLY_COUNT);
     const flyPos = new Float32Array(FLY_COUNT * 3);
     for (let i = 0; i < FLY_COUNT; i++) {
         let x = 0, z = 0, d = 0, tries = 0;
-        do {
-            x = (r() * 2 - 1) * (half - 3);
-            z = (r() * 2 - 1) * (half - 3);
-            d = Math.sqrt(x * x + z * z);
-            tries++;
-        } while ((d < CONFIG.POND_RADIUS + 1 || inCaveFootprint(x, z)) && tries < 40);
+        if (i >= FLY_COUNT - HOTSPOT_COUNT) {
+            x = hotspotX + (r() * 2 - 1) * 1.6;
+            z = hotspotZ + (r() * 2 - 1) * 1.6;
+        } else {
+            do {
+                x = (r() * 2 - 1) * (half - 3);
+                z = (r() * 2 - 1) * (half - 3);
+                d = Math.sqrt(x * x + z * z);
+                tries++;
+            } while ((d < CONFIG.POND_RADIUS + 1 || inCaveFootprint(x, z)) && tries < 40);
+        }
         // clamp above the water line — inside the pond bowl the terrain height is
         // negative and motes would otherwise sit ON the water as glowing squares
         const h = Math.max(getTerrainHeight(x, z), CONFIG.POND_WATER_LEVEL + 0.3);
@@ -170,10 +201,14 @@ export function buildAmbientLife() {
     state.fallingLeaves = leafMesh;
     state.fallingLeafData = fallers;
 
-    // --- Distant birds circling high over the valley
+    // --- Distant birds circling high over the valley, plus a couple that
+    // cross the sky in a straight line instead of looping (item 441) — reads
+    // as a flock passing through rather than every bird patrolling forever.
     const BIRD_COUNT = 5;
+    const FLOCK_COUNT = 2;
+    const total = BIRD_COUNT + FLOCK_COUNT;
     const birdMat = new THREE.MeshBasicMaterial({ color: 0x3a4150, fog: true }); // soft slate silhouettes
-    const birdMesh = new THREE.InstancedMesh(state.sharedBoxGeo, birdMat, BIRD_COUNT);
+    const birdMesh = new THREE.InstancedMesh(state.sharedBoxGeo, birdMat, total);
     birdMesh.castShadow = false;
     birdMesh.receiveShadow = false;
     birdMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -187,9 +222,18 @@ export function buildAmbientLife() {
             phase: r() * Math.PI * 2,
         });
     }
+    for (let i = 0; i < FLOCK_COUNT; i++) {
+        const ang = r() * Math.PI * 2;
+        birds.push({
+            flock: true, crossSpan: half + 25, height: 24 + r() * 10,
+            dirX: Math.cos(ang), dirZ: Math.sin(ang), perp: r() * 40 - 20,
+            speed: 4 + r() * 2.5, period: 30 + r() * 20, phase: r(),
+        });
+    }
     state.scene.add(birdMesh);
     state.birdMesh = birdMesh;
     state.birdData = birds;
+    state.birdScatterT = 0; // item 451: rare flock-scatter burst, advanced in updateEnvironmentAnim
 }
 
 /* ------------------------------------------------------------
@@ -235,7 +279,8 @@ export function buildZoneAmbient() {
         const z = (r() * 2 - 1) * (half - 2);
         if (Math.hypot(x, z) < CONFIG.POND_RADIUS + 1) continue;
         if (inCaveFootprint(x, z)) continue;
-        const spec = zoneAt(x, z).particle;
+        const zone = zoneAt(x, z);
+        const spec = zone.particle;
         if (r() > Math.min(1, spec.density / 1.4)) continue; // density-weighted acceptance
         const h = Math.max(getTerrainHeight(x, z), CONFIG.POND_WATER_LEVEL);
         const col = new THREE.Color(spec.color);
@@ -247,14 +292,39 @@ export function buildZoneAmbient() {
         else if (spec.kind === 'spore') { e.baseY = h + 0.25; e.rise = 2.2; }
         else if (spec.kind === 'snow' || spec.kind === 'leaf') { e.topY = h + 5 + r() * 3.5; e.fall = 5 + r() * 3.5; }
         else e.baseY = h + 0.5 + r() * 1.6; // pollen / sparkle / mist / dust float band
+        // item 203: desert dust motes shimmer harder — a cheap heat-haze stand-in
+        if (spec.kind === 'dust' && zone.id === 'desert') e.hot = true;
         (ZONE_GLOW_KINDS[spec.kind] ? glow : soft).push(e);
         placed++;
+    }
+
+    // item 210: a handful of dedicated "steaming ground" motes over the
+    // volcanic zone, reusing the 'mist' animation — opacity keyed to
+    // state.weatherWetness so they only show as post-rain ground actually dries.
+    let steamPlaced = 0, steamAttempts = 0;
+    while (steamPlaced < 8 && steamAttempts < 400) {
+        steamAttempts++;
+        const x = (r() * 2 - 1) * (half - 2), z = (r() * 2 - 1) * (half - 2);
+        if (Math.hypot(x, z) < CONFIG.POND_RADIUS + 1 || inCaveFootprint(x, z)) continue;
+        const zone = zoneAt(x, z);
+        if (zone.id !== 'volcanic') continue;
+        const h = getTerrainHeight(x, z);
+        const col = new THREE.Color(0xcdbfae);
+        soft.push({ bx: x, bz: z, phase: r(), speed: 0.1 + r() * 0.2, amp: 0.5 + r() * 0.6, kind: 'mist', cr: col.r, cg: col.g, cb: col.b, baseY: h + 0.3, steam: true });
+        steamPlaced++;
+    }
+    // item 456: a few sun-catching glint sparkles over the pond surface
+    for (let i = 0; i < 10; i++) {
+        const a = r() * Math.PI * 2, rr = r() * (CONFIG.POND_RADIUS - 1);
+        const col = new THREE.Color(0xdff3ff);
+        glow.push({ bx: Math.cos(a) * rr, bz: Math.sin(a) * rr, phase: r(), speed: 0.2 + r() * 0.3, amp: 0.3 + r() * 0.4, kind: 'sparkle', cr: col.r, cg: col.g, cb: col.b, baseY: CONFIG.POND_WATER_LEVEL + 0.08, pondGlint: true });
     }
 
     // one shared round sprite for both groups (kept off the firefly texture)
     const sprite = makeSoftSprite();
     state.zoneGlowData = buildParticleGroup(glow, true, sprite);
     state.zoneSoftData = buildParticleGroup(soft, false, sprite);
+    buildGroundDecals(); // items 201/209: puddle + snow-drift decals (atmosphere-fx.js)
 }
 
 function buildParticleGroup(list, additive, sprite) {
@@ -318,6 +388,8 @@ function updateParticleGroup(data, elapsed, updateColor) {
                 z = e.bz + Math.cos(elapsed * 0.5 + e.phase * 9) * 0.5;
                 const s = 0.5 + 0.5 * Math.sin(elapsed * 3 + e.phase * 20);
                 fade = s * s;
+                // item 456: pond glints only really pop while it's sunny (state.weatherMood)
+                if (e.pondGlint) fade *= 0.15 + 0.85 * (state.weatherMood != null ? state.weatherMood : 1);
                 break;
             }
             case 'snow': {
@@ -338,18 +410,39 @@ function updateParticleGroup(data, elapsed, updateColor) {
                 y = e.baseY + Math.sin(elapsed * 0.3 + e.phase * 4) * 0.3;
                 x = e.bx + Math.sin(elapsed * 0.15 + e.phase * 5) * 2.0;
                 z = e.bz + Math.cos(elapsed * 0.12 + e.phase * 3) * 2.0;
+                // item 210: "steaming ground" — rises gently and only shows while
+                // the volcanic ground is actually wet-from-rain and drying out
+                if (e.steam) {
+                    const wet = state.weatherWetness || 0;
+                    y += ((elapsed * 0.15 + e.phase) % 1) * 1.6;
+                    fade = wet;
+                }
                 break;
             }
             default: { // dust
-                y = e.baseY + Math.sin(elapsed * 0.5 + e.phase * 8) * 0.5;
-                x = e.bx + Math.sin(elapsed * 0.3 + e.phase * 9) * 1.2;
-                z = e.bz + Math.cos(elapsed * 0.25 + e.phase * 6) * 1.2;
+                // item 203: desert dust motes shimmer faster/wider — a cheap
+                // heat-haze stand-in, hidden automatically while it's actively
+                // raining/snowing (state.rain/state.snow visibility)
+                const hazy = e.hot && !(state.rain && state.rain.visible) && !(state.snow && state.snow.visible);
+                const freq = hazy ? 1.8 : 0.5, amp = hazy ? 1.2 : 0.5;
+                y = e.baseY + Math.sin(elapsed * freq + e.phase * 8) * amp * (hazy ? 0.35 : 1);
+                x = e.bx + Math.sin(elapsed * (hazy ? 1.1 : 0.3) + e.phase * 9) * 1.2;
+                z = e.bz + Math.cos(elapsed * (hazy ? 0.9 : 0.25) + e.phase * 6) * 1.2;
+                if (hazy) fade = 0.5 + 0.5 * Math.sin(elapsed * 4 + e.phase * 30);
             }
         }
         pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
         if (col) {
-            const f = Math.max(0, fade);
-            col[i * 3] = e.cr * f; col[i * 3 + 1] = e.cg * f; col[i * 3 + 2] = e.cb * f;
+            let f = Math.max(0, fade);
+            // item 212: dust/mist cool toward the fog colour under overcast/storm
+            // moods, echoing the sky/fog tint instead of a fixed particle hue
+            if ((e.kind === 'dust' || e.kind === 'mist') && !e.steam) {
+                const mood = state.weatherMood != null ? state.weatherMood : 1;
+                const cool = 1 - 0.35 * (1 - mood);
+                col[i * 3] = e.cr * f * cool; col[i * 3 + 1] = e.cg * f * (cool + 0.02); col[i * 3 + 2] = e.cb * f;
+            } else {
+                col[i * 3] = e.cr * f; col[i * 3 + 1] = e.cg * f; col[i * 3 + 2] = e.cb * f;
+            }
         }
     }
     data.mesh.geometry.attributes.position.needsUpdate = true;
@@ -421,21 +514,31 @@ export function buildPointsOfInterest() {
     roofMesh.instanceMatrix.needsUpdate = true;
     state.scene.add(roofMesh);
     state.roofMesh = roofMesh;
+
+    buildPoiDetails(); // item 449: cairn + campfire vignettes (atmosphere-fx.js)
 }
 
 // Reusable transform for environment animation (never allocated per frame)
 const envDummy = new THREE.Object3D();
 
-// Wind sway on one precomputed detail instance (index into detailInstances)
+// Wind sway on one precomputed detail instance (index into detailInstances).
+// items 206/213: the phase is offset along the current wind direction so a
+// gust reads as a wave TRAVELING across the field rather than every blade
+// oscillating in unison, and a small constant lean (not just back-and-forth
+// oscillation) biases toward the wind direction, strongest during gusts.
 function swayInstance(details, i, elapsed, amp) {
     const d = details[i];
+    const wind = state.weatherWind || 0;
+    const wdir = state.weatherWindDir || { x: 1, z: 0 };
+    const travel = (d.x * wdir.x + d.z * wdir.z) * 0.22;
     const phase = (d.x + d.z) * 0.5;
+    const lean = wind * 0.1;
     envDummy.position.set(d.x, d.y, d.z);
     envDummy.scale.set(d.sx, d.sy, d.sz);
     envDummy.rotation.set(
-        (d.rx || 0) + Math.sin(elapsed * 1.5 + phase) * amp,
+        (d.rx || 0) + Math.sin(elapsed * 1.5 + phase - travel) * amp + lean * wdir.x,
         d.ry || 0,
-        (d.rz || 0) + Math.cos(elapsed * 1.3 + phase) * amp
+        (d.rz || 0) + Math.cos(elapsed * 1.3 + phase - travel) * amp + lean * wdir.z
     );
     envDummy.updateMatrix();
     // Phase 4b: the detail set is sector-chunked — route the write to the
@@ -443,10 +546,19 @@ function swayInstance(details, i, elapsed, amp) {
     chunkSetMatrix(state.detailChunks, i, envDummy.matrix);
 }
 
+// Reusable colour scratch for the cloud weather-tint below (never allocated per frame)
+const _cloudTint = new THREE.Color();
+const _cA_FLASH = new THREE.Color(0xf5f7ff);
+let _lastAnimElapsed = 0; // used to derive a cheap per-call dt for the FX below
+let _fishRippleAcc = 0;   // item 450: ambient pond-ripple timer
+
 // Wind sway + water flow + ambient life animation.
 // Wind touches only the precomputed animated index lists — static instances
 // (rocks, trunks, pebbles, ...) are never revisited per frame.
 export function updateEnvironmentAnim(elapsed) {
+    const dt = _lastAnimElapsed ? Math.max(0, Math.min(0.25, elapsed - _lastAnimElapsed)) : 0.016;
+    _lastAnimElapsed = elapsed;
+
     if (state.water) {
         state.water.material.uniforms['time'].value += 1.0 / 60.0;
     }
@@ -457,12 +569,24 @@ export function updateEnvironmentAnim(elapsed) {
         state.foamRing.material.opacity = 0.42 + Math.sin(elapsed * 0.8) * 0.1;
     }
 
-    // Multi-layer clouds drifting at different speeds for parallax
+    // Multi-layer clouds drifting at different speeds for parallax, retinted
+    // toward the current fog colour and darkened under stormy weather (items
+    // 11/200/208/439/444) — the darkening/lightning-flash lead the weather
+    // transition itself (state.weatherCloudDark/state.weatherFlash), so a
+    // storm reads as "clouds building" rather than an instant swap.
     if (state.cloudLayers) {
+        const dark = state.weatherCloudDark || 0;
+        const flash = state.weatherFlash || 0;
         for (const layer of state.cloudLayers) {
             layer.mesh.position.x = Math.sin(elapsed * layer.driftSpeed + layer.phase) * layer.driftAmp;
             layer.mesh.position.z = Math.cos(elapsed * layer.driftSpeed * 0.7 + layer.phase) * layer.driftAmp * 0.4;
+            _cloudTint.copy(layer.baseColor);
+            if (state.scene.fog) _cloudTint.lerp(state.scene.fog.color, Math.min(0.7, dark * 0.8));
+            if (flash > 0.05) _cloudTint.lerp(_cA_FLASH, Math.min(0.5, flash));
+            layer.mesh.material.color.copy(_cloudTint);
+            layer.mesh.material.opacity = layer.baseOpacity * (1 - dark * 0.25);
         }
+        updateCloudShadows();
     }
 
     // Wind sway via precomputed instance lists. Weather gusts stiffen the sway
@@ -527,22 +651,54 @@ export function updateEnvironmentAnim(elapsed) {
     updateParticleGroup(state.zoneGlowData, elapsed, true);
     updateParticleGroup(state.zoneSoftData, elapsed, false);
 
-    // Distant birds circling high over the valley, wings flapping
+    // Distant birds circling high over the valley, wings flapping, plus a
+    // couple crossing straight through (item 441) and a rare all-flock
+    // "scatter" burst — quicker + higher for a few seconds (item 451).
     if (state.birdMesh && state.birdData) {
         const birds = state.birdData;
+        if (state.birdScatterT > 0) state.birdScatterT = Math.max(0, state.birdScatterT - dt);
+        else if (Math.random() < 0.0006) state.birdScatterT = 3 + Math.random() * 2;
+        const scatterK = state.birdScatterT > 0 ? Math.min(1, state.birdScatterT / 1.2) : 0;
         for (let i = 0; i < birds.length; i++) {
             const B = birds[i];
-            const a = elapsed * B.speed + B.phase;
-            envDummy.position.set(
-                Math.cos(a) * B.radius,
-                B.height + Math.sin(elapsed * 0.7 + B.phase) * 1.5,
-                Math.sin(a) * B.radius
-            );
-            envDummy.scale.set(1.35, 0.09, 0.4); // small — distant silhouettes, not floating planks
-            envDummy.rotation.set(0, -a, Math.sin(elapsed * 7 + i * 1.3) * 0.45); // flap
+            if (B.flock) {
+                const t = ((elapsed * B.speed + B.phase * B.period) % B.period) / B.period;
+                const travel = (t - 0.5) * 2 * B.crossSpan;
+                const px = -B.dirZ, pz = B.dirX; // perpendicular unit vector
+                envDummy.position.set(B.dirX * travel + px * B.perp, B.height + scatterK * 3, B.dirZ * travel + pz * B.perp);
+                envDummy.scale.set(1.2, 0.08, 0.36);
+                envDummy.rotation.set(0, -Math.atan2(B.dirX, B.dirZ), Math.sin(elapsed * 8 + i * 1.7) * 0.4);
+            } else {
+                const spd = B.speed * (1 + scatterK * 1.6);
+                const a = elapsed * spd + B.phase;
+                envDummy.position.set(
+                    Math.cos(a) * B.radius,
+                    B.height + scatterK * 4 + Math.sin(elapsed * 0.7 + B.phase) * 1.5,
+                    Math.sin(a) * B.radius
+                );
+                envDummy.scale.set(1.35, 0.09, 0.4); // small — distant silhouettes, not floating planks
+                envDummy.rotation.set(0, -a, Math.sin(elapsed * 7 + i * 1.3) * 0.45); // flap
+            }
             envDummy.updateMatrix();
             state.birdMesh.setMatrixAt(i, envDummy.matrix);
         }
         state.birdMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // items 201/209: puddle fill-in / snow-drift reveal (atmosphere-fx.js)
+    updateGroundDecals();
+    // items 449/453/454/455/460: cairn+campfire vignette (atmosphere-fx.js)
+    updatePoiDetails(elapsed);
+
+    // item 450: occasional ambient ripple on the pond, independent of rain —
+    // reads as a fish surfacing, purely decorative (reuses the existing
+    // ripple-pool system already disposed by game.js's destroy()).
+    _fishRippleAcc += dt;
+    if (_fishRippleAcc > 3.2 + Math.sin(elapsed * 0.037) * 1.2 && !state.isPaused) {
+        _fishRippleAcc = 0;
+        if (Math.random() < 0.5) {
+            const a = Math.random() * Math.PI * 2, rr = Math.random() * (CONFIG.POND_RADIUS - 1.5);
+            spawnWaterRipple(Math.cos(a) * rr, Math.sin(a) * rr);
+        }
     }
 }

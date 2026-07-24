@@ -197,4 +197,34 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ---- Sky/weather/atmosphere additions (graphics backlog items 1-32, 197-214, 437-460) ----
+    DAY_NIGHT_PERIOD: 420,          // item 1: seconds for one full day-arc; a short session sees one slice
+    DAY_NIGHT_NIGHT_ELEV: 18,       // item 1: degrees — dimmer point of the CONTINUOUS subtle arc
+    DAY_NIGHT_DAY_ELEV: 30,         // item 1: degrees — brighter point of the continuous arc
+    DAY_NIGHT_AZIMUTH_SWING: 18,    // item 1: degrees the sun azimuth drifts through across the arc
+    DAY_NIGHT_SEED_JITTER_DEG: 6,   // item 5: +/- per-seed elevation/azimuth variance so shadow direction differs per load
+    NIGHT_EVENT_CHECK_MIN: 90,      // items 2/4: seconds between rolls of the chance to enter a rare night/dusk event
+    NIGHT_EVENT_CHECK_SPAN: 90,
+    NIGHT_EVENT_CHANCE: 0.4,        // odds a check actually enters the event (kept "rare", not guaranteed)
+    NIGHT_EVENT_ENTER_TIME: 16,     // seconds to blend from day into the dip
+    NIGHT_EVENT_HOLD_MIN: 40,       // seconds it lingers once fully in
+    NIGHT_EVENT_HOLD_SPAN: 35,
+    NIGHT_EVENT_EXIT_TIME: 20,      // seconds to blend back out to day
+    STAR_COUNT: 220,                // item 17
+    SHOOTING_STAR_CHANCE: 0.0006,   // item 445: per-frame odds of a shooting star while deep in the night dip
+    FOG_ALTITUDE_REF: 5,            // item 25: camera-y reference height; fog thins above it, thickens below
+    FOG_ALTITUDE_STRENGTH: 0.3,     // item 25: max +/- fraction of fogMul shifted by altitude
+    FOG_ZONE_TINT_STRENGTH: 0.12,   // item 21: how much the local zone's colour leaks into fog colour
+    FOG_STORM_FLASH_BOOST: 0.5,     // item 29: extra fogMul briefly added on a lightning flash
+    WETNESS_RISE_RATE: 0.55,        // items 201/210: ground-wetness gain rate while rain/thunderstorm falls
+    WETNESS_DECAY_RATE: 0.045,      // items 201/210: ground-wetness decay rate once precipitation stops
+    PUDDLE_COUNT: 12,               // item 201: temporary puddle decals after rain
+    STEAM_VENT_COUNT: 5,            // item 210: volcanic "steaming ground" wisps as wetness dries
+    RAINBOW_FADE_TIME: 8,           // items 197/211: rainbow/fog-bow fade in/out duration (seconds)
+    RAINBOW_HOLD_TIME: 20,          // items 197/211: seconds the rainbow lingers at full opacity
+    CLOUD_SHADOW_COUNT: 5,          // items 8/442: tracked cloud-shadow blobs (subset of cluster centroids)
+    POI_DISCOVER_RADIUS: 9,         // item 454: distance at which a POI's first-visit sparkle triggers
+    HEAT_HAZE_COUNT: 10,            // item 203: desert heat-shimmer motes
+    SNOW_DRIFT_COUNT: 10,           // item 209: snow-mound decals near tree bases
 };
