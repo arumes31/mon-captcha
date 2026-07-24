@@ -31,6 +31,22 @@ function boulder(rock, x, y, z, s, rng, tintDown = 1) {
     });
 }
 
+// items 132/170: a scatter of small loose scree/pebbles around a collapse-
+// adjacent point (choke pile / fallen block) — "breakable-looking" foreshadow
+// rubble distinct from the bigger structural boulders above.
+function scree(rock, cx, cz, radius, rng, count) {
+    for (let i = 0; i < count; i++) {
+        const a = rng() * Math.PI * 2, r = rng() * radius;
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+        const s = 0.12 + rng() * 0.16;
+        rock.push({
+            x, y: getGroundY(x, z) + s * V * 0.4, z, sx: s, sy: s * (0.6 + rng() * 0.3), sz: s * (0.7 + rng() * 0.3),
+            color: new THREE.Color(0.1 + rng() * 0.05, 0.095 + rng() * 0.03, 0.1 + rng() * 0.04).getHex(),
+            rx: rng() * 0.6, ry: rng() * Math.PI, rz: rng() * 0.6,
+        });
+    }
+}
+
 // Structural topology rock for one cave -> pushed into the always-on rock layer.
 export function buildTopoRock(cave, rock, rng) {
     const t = cave.topo;
@@ -53,6 +69,7 @@ export function buildTopoRock(cave, rock, rng) {
             const lat = (rng() - 0.5) * ch.hw * 1.2;
             boulder(rock, ch.x + ch.nx * lat, gy + 1.9 + rng() * 0.5, ch.z + ch.nz * lat, 0.55 + rng() * 0.4, rng, 0.9);
         }
+        scree(rock, ch.x, ch.z, ch.hw + 0.6, rng, 5 + Math.floor(rng() * 4)); // items 132/170
     }
 
     // item 11: talus scatter on the descending slope nodes
@@ -80,6 +97,7 @@ export function buildTopoRock(cave, rock, rng) {
             rx: fb.tilt, ry: fb.rot, rz: fb.tilt * 0.6,
         });
         if (Math.random() < 0.5) boulder(rock, fb.x + (Math.random() - 0.5) * fb.s, gy + 0.2, fb.z + (Math.random() - 0.5) * fb.s, 0.4 + Math.random() * 0.3, rng);
+        scree(rock, fb.x, fb.z, fb.s * 1.6, rng, 4 + Math.floor(rng() * 3)); // items 132/170
     }
 
     // item 1: shaft collar — a rough rim of rock around the drop mouth

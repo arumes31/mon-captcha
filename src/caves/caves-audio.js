@@ -231,6 +231,35 @@ function playDrip(x, y, z, gain, pan) {
     } catch (e) {}
 }
 
+/* ------------------------------------------------------------
+   Item 79 — a splash cue fired DIRECTLY on the exact frame a real
+   ceiling drip lands on a pool (caves.js's updateCaves already spawns
+   the visual ripple ring at that moment; this is its audio partner),
+   genuinely audio-visual SYNCED — unlike the ambient item-87 drip
+   cadence above, which is a slot-based approximation, not tied to any
+   single visible drop.
+   ------------------------------------------------------------ */
+export function dripLandingSplash(x, y, z) {
+    if (!A.built || A.gate < 0.3) return;
+    const ctx = state.audio;
+    if (!ctx || !A.master) return;
+    const cam = state.camera && state.camera.position;
+    if (!cam) return;
+    const dist = Math.hypot(x - cam.x, z - cam.z);
+    if (dist > DRIP_RADIUS) return;
+    const fx = state.caveFx;
+    const inside = fx ? Math.max(0, Math.min(1, fx.inside)) : 0;
+    if (inside < 0.03) return;
+    const atten = Math.pow(Math.max(0, 1 - dist / DRIP_RADIUS), 1.6);
+    const gain = DRIP_GAIN * 1.3 * atten * inside * A.gate; // a touch brighter than the ambient cadence
+    if (gain < 0.0006) return;
+    state.camera.getWorldDirection(_fwd); _fwd.y = 0; if (_fwd.lengthSq() > 0) _fwd.normalize();
+    const rx = -_fwd.z, rz = _fwd.x;
+    const dirx = (x - cam.x) / (dist || 1), dirz = (z - cam.z) / (dist || 1);
+    const pan = Math.max(-1, Math.min(1, dirx * rx + dirz * rz));
+    playDrip(x, y, z, gain, pan);
+}
+
 /* Nearest cave-water distance (pools/stream anchors) to a point, or Infinity. */
 function nearestCaveWater(x, z) {
     let best = Infinity;

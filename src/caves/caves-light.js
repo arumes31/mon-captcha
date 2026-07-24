@@ -37,6 +37,17 @@ import { state, reuse } from '../state.js';
 import { mulberry32 } from '../random.js';
 import { CAVES, getGroundY, caveCeilingAt } from '../heightfield.js';
 import { inLavaFootprint } from '../lava.js';
+import { spawnParticleBurst } from '../particles.js';
+
+// item 167: god-ray / shaft-daylight tint by host zone — cooler over ice/
+// alpine caves, warmer over desert/volcanic, neutral amber elsewhere.
+function zoneRayTint(zoneId) {
+    switch (zoneId) {
+        case 'ice': case 'snow': case 'alpine': return 0xcfe6ff;
+        case 'desert': case 'volcanic': return 0xffcf9a;
+        default: return 0xffe6b0;
+    }
+}
 
 const LANTERN_BASE = 6.5;    // warm point-light intensity inside (decay 2) — a POOL
                              // of near light that falls off fast, so deep chambers
@@ -96,12 +107,14 @@ export function buildCaveLight() {
     for (let ci = 0; ci < CAVES.length; ci++) {
         const c = CAVES[ci];
         const rec = state.caveRender[ci];
-        const entry = { rays: [], lure: null, shimmer: null };
+        const entry = { rays: [], lure: null, shimmer: null, fillGlow: null, braziers: null, gasVent: null };
         buildGodRays(c, rec, entry, shaftsPerCave, rng);
-        buildFillLight(c, rec, rng);
+        entry.fillGlow = buildFillLight(c, rec, rng);      // items 141/162/165
         buildEntranceHalos(c, rec);
         buildLuringGlow(c, rec, entry, rng);
         buildHeatShimmer(c, rec, entry, rng);
+        buildBraziers(c, rec, entry, rng);                 // item 161
+        buildGasVent(c, rec, entry, rng);                  // item 84
         state.caveLight.push(entry);
     }
 }
@@ -135,6 +148,7 @@ function buildGodRays(cave, rec, entry, count, rng) {
     const main = cave.paths[0];
     for (let i = 2; i < main.length - 2; i += 3) spots.push({ x: main[i].x, z: main[i].z });
     if (!spots.length) return;
+    const tint = zoneRayTint(cave.zoneId); // item 167
 
     for (let s = 0; s < count && spots.length; s++) {
         const idx = Math.floor(rng() * spots.length);
@@ -148,7 +162,7 @@ function buildGodRays(cave, rec, entry, count, rng) {
         // crossed additive quads — a slight shared slant reads as raked daylight.
         // Each plane is its own aux entry so the core culls + frees it cleanly.
         const mat = new THREE.MeshBasicMaterial({
-            map: state.caveShaftTex, color: 0xffe6b0, transparent: true, opacity: 0.075,
+            map: state.caveShaftTex, color: tint, transparent: true, opacity: 0.075,
             blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
         });
         const geo = new THREE.PlaneGeometry(width, height);
@@ -163,7 +177,7 @@ function buildGodRays(cave, rec, entry, count, rng) {
 
         // bright pool where the shaft meets the floor
         const poolMat = new THREE.MeshBasicMaterial({
-            map: state.caveGlowTex, color: 0xffe0a4, transparent: true, opacity: 0.1,
+            map: state.caveGlowTex, color: tint, transparent: true, opacity: 0.1,
             blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
         });
         const pool = new THREE.Mesh(new THREE.PlaneGeometry(width * 1.6, width * 1.6), poolMat);
@@ -172,7 +186,23 @@ function buildGodRays(cave, rec, entry, count, rng) {
         state.scene.add(pool);
         (rec.aux = rec.aux || []).push(pool);
 
-        entry.rays.push({ mat, poolMat, base: 0.075, poolBase: 0.1, ph: rng() * 6.28, x: sp.x, z: sp.z, floorY, height });
+        // item 169: a handful of dust motes drifting WITHIN the shaft's own
+        // column (local to this ray), distinct from the global ambient dust
+        // field in caves-atmos.js — reuses the same backlit-mote technique.
+        const dN = 6;
+        const dPos = new Float32Array(dN * 3);
+        for (let di = 0; di < dN; di++) dPos[di * 3 + 1] = -1000;
+        const dGeo = new THREE.BufferGeometry();
+        dGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3));
+        const dMat = new THREE.PointsMaterial({ color: tint, size: 0.045, transparent: true, opacity: 0.0, map: state.caveGlowTex, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+        const dPts = new THREE.Points(dGeo, dMat);
+        dPts.frustumCulled = false;
+        state.scene.add(dPts);
+        (rec.aux = rec.aux || []).push(dPts);
+        const dMotes = [];
+        for (let di = 0; di < dN; di++) dMotes.push({ x: sp.x + (rng() - 0.5) * width * 1.3, z: sp.z + (rng() - 0.5) * width * 1.3, sp: 0.06 + rng() * 0.08, ph: rng() * 6.28 });
+
+        entry.rays.push({ mat, poolMat, base: 0.075, poolBase: 0.1, ph: rng() * 6.28, x: sp.x, z: sp.z, floorY, height, dust: { pts: dPts, arr: dPos, motes: dMotes } });
     }
 }
 
@@ -184,14 +214,32 @@ function buildFillLight(cave, rec, rng) {
     let auxEmis = 0;
     if (rec.aux) for (const m of rec.aux) if (m.isInstancedMesh && m.material && m.material.emissive) auxEmis += m.count;
     const density = glowCount + auxEmis * 0.5;
-    const base = Math.min(3.8, 1.1 + density * 0.055);
-    // seat it at a chamber (or the mid node) up toward the vault
-    const ch = cave.chambers[0] || cave.paths[0][Math.floor(cave.paths[0].length / 2)];
-    const y = getGroundY(ch.x, ch.z) + 1.6;
-    const fill = new THREE.PointLight(cave._glow, base, rec.radius + 9, 2);
-    fill.position.set(ch.x, y, ch.z); fill.castShadow = false;
+    let base = Math.min(3.8, 1.1 + density * 0.055);
+    // item 165: bias the anchor toward the chamber's FOCAL feature (hero
+    // crystal > pool > plain chamber centre) so the light draws the eye there.
+    let ax, az;
+    if (cave._heroPos) { ax = cave._heroPos.x; az = cave._heroPos.z; }
+    else if (cave.pool) { ax = cave.pool.x; az = cave.pool.z; }
+    else { const ch = cave.chambers[0] || cave.paths[0][Math.floor(cave.paths[0].length / 2)]; ax = ch.x; az = ch.z; }
+    const y = getGroundY(ax, az) + 1.6;
+    // item 141: the cathedral centrepiece gets a distinctly wider, grander
+    // falloff so its scale reads, instead of the same treatment as any chamber.
+    const cathedral = !!(cave.topo && cave.topo.cathedral);
+    const dist = rec.radius + (cathedral ? 16 : 9);
+    if (cathedral) base = Math.min(4.6, base * 1.25);
+    const fill = new THREE.PointLight(cave._glow, base, dist, 2);
+    fill.position.set(ax, y, az); fill.castShadow = false;
     state.scene.add(fill);
     rec.lights.push({ light: fill, base, flick: 0.4 + rng() * 0.5 });
+    // item 162: a small bright-core sprite co-located with the fill light so
+    // the falloff reads as bright-core + soft-penumbra rather than one curve.
+    const coreMat = new THREE.SpriteMaterial({ map: state.caveGlowTex, color: cave._glow, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+    const core = new THREE.Sprite(coreMat);
+    core.scale.setScalar(0.45 + base * 0.07);
+    core.position.set(ax, y, az);
+    state.scene.add(core);
+    (rec.aux = rec.aux || []).push(core);
+    return { coreMat, baseOpacity: 0.5, ph: rng() * 6.28 };
 }
 
 // Additive daylight halo at each mouth — the entrance read (looking back / on approach).
@@ -259,6 +307,44 @@ function buildHeatShimmer(cave, rec, entry, rng) {
     entry.shimmer = { pts, arr: pos, motes };
 }
 
+// item 161: torch/brazier-style prop lights at chamber junctions for readable
+// wayfinding — a static post + a warm additive flame SPRITE (no new dynamic
+// PointLight, per the point-light budget: the existing fill/lantern already
+// lift the chamber; this is a wayfinding read, not another light source).
+function buildBraziers(cave, rec, entry, rng) {
+    const main = cave.paths[0];
+    const braziers = [];
+    for (const ch of cave.chambers) {
+        if (rng() > 0.5) continue;
+        const n = main[ch.i];
+        const gy = getGroundY(ch.x, ch.z);
+        const off = (n ? n.hw : 1.4) * 0.7, a = rng() * Math.PI * 2;
+        const x = ch.x + Math.cos(a) * off, z = ch.z + Math.sin(a) * off;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.9, 6), new THREE.MeshStandardMaterial({ color: 0x1c1712, roughness: 0.92 }));
+        post.position.set(x, gy + 0.45, z); post.castShadow = false;
+        state.scene.add(post); (rec.aux = rec.aux || []).push(post);
+        const flameMat = new THREE.SpriteMaterial({ map: state.caveGlowTex, color: 0xffa04a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false });
+        const flame = new THREE.Sprite(flameMat);
+        flame.scale.setScalar(0.32);
+        flame.position.set(x, gy + 0.95, z);
+        state.scene.add(flame); (rec.aux = rec.aux || []).push(flame);
+        braziers.push({ flame, ph: rng() * 6.28 });
+    }
+    if (braziers.length) entry.braziers = braziers;
+}
+
+// item 84: an occasional bubbling gas-vent visual in volcanic-adjacent caves
+// near lava-carved sections — a floor-level pop, distinct from the pool-only
+// hotspring bubbling in caves-water.js (this needs no pool, just proximity).
+function buildGasVent(cave, rec, entry, rng) {
+    if (state.qualityLevel === 'low') return;
+    let hot = null;
+    for (const path of cave.paths) { for (const n of path) if (inLavaFootprint(n.x, n.z, 7)) { hot = n; break; } if (hot) break; }
+    if (!hot) return;
+    const x = hot.x + (rng() - 0.5) * 1.2, z = hot.z + (rng() - 0.5) * 1.2;
+    entry.gasVent = { x, z, floorY: getGroundY(x, z), timer: 1 + rng() * 2 };
+}
+
 /* ------------------------------------------------------------
    Per-frame — lantern follow/fade + per-cave light animation for
    observed caves (band !== far). Reads state.caveFx (set by
@@ -299,6 +385,7 @@ export function updateCaveLight(dt, elapsed) {
             const f = 0.78 + 0.22 * Math.sin(elapsed * 0.9 + r.ph) + 0.05 * Math.sin(elapsed * 3.3 + r.ph);
             r.mat.opacity = r.base * f;
             r.poolMat.opacity = r.poolBase * f;
+            if (r.dust) animateRayDust(r, elapsed); // item 169
         }
         if (e.lure) {
             const p = 0.42 + 0.28 * (0.5 + 0.5 * Math.sin(elapsed * 0.8 + e.lure.ph));
@@ -306,7 +393,38 @@ export function updateCaveLight(dt, elapsed) {
             e.lure.orb.position.y = e.lure.y + Math.sin(elapsed * 0.6 + e.lure.ph) * 0.12;
         }
         if (e.shimmer) animateShimmer(e.shimmer, elapsed);
+        if (e.fillGlow) { // item 162: bright-core sprite riding the fill light
+            const g = e.fillGlow;
+            g.coreMat.opacity = g.baseOpacity * (0.82 + 0.18 * Math.sin(elapsed * 1.1 + g.ph));
+        }
+        if (e.braziers) for (const b of e.braziers) { // item 161
+            b.flame.material.opacity = 0.55 + 0.35 * Math.abs(Math.sin(elapsed * 5.5 + b.ph)) + 0.1 * Math.sin(elapsed * 13 + b.ph);
+            b.flame.scale.setScalar(0.32 * (0.9 + 0.12 * Math.sin(elapsed * 7 + b.ph)));
+        }
+        if (e.gasVent) { // item 84
+            const gv = e.gasVent;
+            gv.timer -= dt;
+            if (gv.timer <= 0 && rec.band === 'near' && !state.isPaused) {
+                spawnParticleBurst(gv.x, gv.floorY + 0.08, gv.z, 0xb98a5a, 3);
+                gv.timer = 1.2 + Math.random() * 1.8;
+            }
+        }
     }
+}
+
+function animateRayDust(r, elapsed) {
+    const { pts, arr, motes } = r.dust;
+    let anyOn = false;
+    for (let i = 0; i < motes.length; i++) {
+        const m = motes[i];
+        const t = (elapsed * m.sp + m.ph) % 1;
+        arr[i * 3] = m.x + Math.sin(elapsed * 0.6 + m.ph) * 0.1;
+        arr[i * 3 + 1] = r.floorY + t * r.height;
+        arr[i * 3 + 2] = m.z + Math.cos(elapsed * 0.5 + m.ph) * 0.1;
+        anyOn = true;
+    }
+    pts.material.opacity = anyOn ? r.base * 2.2 : 0;
+    pts.geometry.attributes.position.needsUpdate = true;
 }
 
 function animateShimmer(sh, elapsed) {

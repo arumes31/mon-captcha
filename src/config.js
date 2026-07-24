@@ -347,4 +347,9 @@ export const CONFIG = {
     RING_COLOR_EASE: 6.0,            // per-second smoothing rate for the ring's chance-color lerp
     TRAJECTORY_GHOST_STEPS: 22,
     TRAJECTORY_GHOST_DT: 0.045,
+
+    // ---- Cave world/graphics backlog pass (sections 5/8/9/10 — items 79-94,
+    // 129-176) — a single new tunable added by that pass; everything else
+    // reused existing per-module magic numbers rather than growing this file.
+    CAVE_VIGNETTE_MAX: 0.4, // item 173: peak screen-vignette opacity at the cave-mouth "eyes adjusting" transient
 };
