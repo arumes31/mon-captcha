@@ -7,6 +7,9 @@ graphify-out/
 .roorules
 CLAUDE.md
 
+# ---- Scratch / brainstorming output — never shipped ----
+temp/
+
 # ---- DEV-ONLY test tooling (Phase 4a QA harness) ----
 # The shipped game (index.html, main.js, src/) stays buildless and has NO deps.
 # Everything below is local test tooling and transient output — never shipped.

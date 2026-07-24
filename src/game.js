@@ -121,6 +121,7 @@ export function destroy() {
     if (state.renderer) {
         state.renderer.domElement.removeEventListener('mousedown', onCanvasMouseDown, false);
         state.renderer.domElement.removeEventListener('webglcontextlost', onContextLost, false);
+        state.renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored, false);
     }
     if (ui.clickToPlay) ui.clickToPlay.removeEventListener('click', requestLock, false);
     if (state.controls) {
@@ -301,6 +302,11 @@ function disposeMesh(mesh) {
    ============================================================ */
 export function init() {
     if (state.scene) return;
+    // destroy() sets this true and never resets it — without this line, any
+    // destroy() -> init() cycle (the documented public re-init contract, and
+    // now onContextRestored below) would rebuild the whole scene and then
+    // have animate() immediately no-op on it forever.
+    state.disposed = false;
     try {
         const container = document.getElementById('captcha-container');
         if (!container) throw new Error('#captcha-container not found');
@@ -331,6 +337,7 @@ export function init() {
         state.controls.addEventListener('unlock', onUnlock, false);
         window.addEventListener('resize', onResize, false);
         state.renderer.domElement.addEventListener('webglcontextlost', onContextLost, false);
+        state.renderer.domElement.addEventListener('webglcontextrestored', onContextRestored, false);
 
         // Optional diagnostic hook (only when the page URL carries ?probe) —
         // exposes internal state for the offline test rig. Zero cost otherwise
@@ -446,4 +453,18 @@ function onContextLost(e) {
     console.warn('[captcha] context lost - stopping render frames');
     if (state.rafId) cancelAnimationFrame(state.rafId);
     state.rafId = null;
+}
+
+// Graphics backlog item 498: a lost context used to freeze the game forever
+// (onContextLost stopped the loop but nothing ever restarted it — there was
+// no 'webglcontextrestored' listener at all). destroy()+init() already do a
+// full, clean teardown/rebuild of every three.js resource, so reuse them
+// rather than trying to selectively re-upload state onto the restored
+// context. window.__globalRenderer (engine.js) is left untouched here since
+// a context restore replaces the GL context WebGLRenderer wraps in place —
+// there is nothing stale to drop.
+function onContextRestored() {
+    console.warn('[captcha] context restored - rebuilding');
+    destroy();
+    init();
 }
