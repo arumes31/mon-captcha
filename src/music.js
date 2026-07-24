@@ -18,6 +18,7 @@
    LOW — this is a captcha, not a concert.
    ============================================================ */
 
+import { CONFIG } from './config.js';
 import { state } from './state.js';
 import { zoneAt } from './zones/zones.js';
 import { caveAt } from './heightfield.js';
@@ -25,6 +26,16 @@ import { caveAt } from './heightfield.js';
 const MASTER_GAIN = 0.16;
 const XFADE = 2.0;          // seconds
 const POLL_MS = 1000;
+
+// item 480: rough "warmth" lean per mood (-1 cool/stark .. +1 warm/calm), used
+// only for a SUBTLE global color-grade nudge in weather.js — it never touches
+// a mood's own pad/event recipe above. Moods not listed (e.g. volcanic, which
+// already reads visually warm via its own zone palette) stay neutral here
+// rather than double-counting.
+const MOOD_WARMTH = {
+    meadow: 0.6, autumn: 0.5, lakeside: 0.4, mushroom: 0.3, jungle: 0.25, desert: 0.3,
+    swamp: -0.15, rocky: -0.2, ice: -0.6, snow: -0.5, alpine: -0.35, cave: -0.4,
+};
 
 /* ------------------------------------------------------------
    Mood recipes. Frequencies in Hz; event rate = [min,max] secs
@@ -141,6 +152,7 @@ const M = {
     pollTimer: null,
     active: false,      // gesture-gated + not paused/solved
     stopped: false,     // solve/destroy: permanent
+    lastCrossfadeAt: 0, // item 471: ctx.currentTime of the last crossfadeTo() call
 };
 
 function ensureGraph() {
@@ -286,6 +298,7 @@ function crossfadeTo(moodId) {
     if (!ensureGraph()) return;
     const ctx = state.audio;
     const t = ctx.currentTime;
+    M.lastCrossfadeAt = t; // item 471: marks the start of the "holds its breath" duck envelope
     const toA = M.activeSlot !== 'A';
     const inSlot = toA ? M.slotA : M.slotB;
     const outSlot = toA ? M.slotB : M.slotA;
@@ -381,6 +394,46 @@ export function stopMusic() {
 
 // Test-rig introspection (read-only; used by the ?probe hook only)
 export function musicCurrentMood() { return M.currentMood; }
+
+/* ------------------------------------------------------------
+   item 461 — a rough "beat" signal for otherwise-independent slow
+   ambient visuals to lean on for cohesion: the CURRENT mood's own
+   pad-breathing LFO rate (same frequency driving that mood's actual
+   audio breath, just re-evaluated against the live audio clock rather
+   than reading the oscillator's internal phase, which Web Audio never
+   exposes once a node is running). Returns 0 (no nudge) before the
+   first mood plays.
+   ------------------------------------------------------------ */
+export function musicBeatPhase() {
+    if (!state.audio || !M.currentMood) return 0;
+    const mood = MOODS[M.currentMood] || MOODS.meadow;
+    const freq = (mood.pad && mood.pad.lfo) || 0.06;
+    return Math.sin(2 * Math.PI * freq * state.audio.currentTime);
+}
+
+/* ------------------------------------------------------------
+   item 471 — "holds its breath" duck envelope: 0..1, spiking right
+   as crossfadeTo() starts a mood shift then releasing back to 0
+   across roughly the crossfade window. Purely a visual cue (weather.js
+   reads it for a tiny exposure/hemi dip) — the audio crossfade itself
+   is unaffected.
+   ------------------------------------------------------------ */
+export function musicDuckAmount() {
+    if (!state.audio || !M.lastCrossfadeAt) return 0;
+    const dt = state.audio.currentTime - M.lastCrossfadeAt;
+    if (dt < 0) return 0;
+    if (dt < CONFIG.MUSIC_DUCK_ATTACK) return dt / CONFIG.MUSIC_DUCK_ATTACK;
+    const rel = dt - CONFIG.MUSIC_DUCK_ATTACK;
+    if (rel > CONFIG.MUSIC_DUCK_RELEASE) return 0;
+    return 1 - rel / CONFIG.MUSIC_DUCK_RELEASE;
+}
+
+// item 480: -1..1 warmth lean of the currently-playing mood (0 before/without
+// music, and for any mood not in MOOD_WARMTH) — see weather.js's color grade.
+export function musicMoodWarmth() {
+    if (!M.currentMood) return 0;
+    return MOOD_WARMTH[M.currentMood] || 0;
+}
 
 // Teardown (game destroy)
 export function disposeMusic() {

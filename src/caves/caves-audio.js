@@ -38,6 +38,7 @@
    ============================================================ */
 
 import * as THREE from 'three';
+import { CONFIG } from '../config.js';
 import { state } from '../state.js';
 import { CAVES, caveAt, isWaterAt, caveSlippery } from '../heightfield.js';
 
@@ -52,7 +53,11 @@ const FOOT_GAIN = 0.085;    // per footfall
 const DRIP_RADIUS = 15;     // drips beyond this are inaudible
 const TRICKLE_NEAR = 2.6;   // full trickle within this of cave water
 const TRICKLE_FAR = 12;     // trickle silent beyond this
-const STRIDE_LEN = 1.7;     // world units per footfall (tempo ~ walk speed)
+// item 465: CONFIG.CAVE_FOOTSTEP_STRIDE_LEN (not a local const any more) —
+// shared with player.js's cave footstep DUST cadence so the two accumulators,
+// fed the identical state.player.velocity.length()*dt each frame, trigger on
+// the same frame instead of drifting (they used to disagree: 1.7 here vs.
+// FOOTSTEP_STRIDE_LEN's 2.1 in player.js).
 const FOOT_MIN_SPEED = 0.7; // below this the player is "standing still"
 
 /* Per-tier drip voice cap (item 100 spirit — cheaper on low, richer on high). */
@@ -482,17 +487,21 @@ export function updateCaveAudio(dt, elapsed) {
         const speed = p.velocity.length();
         if (speed > FOOT_MIN_SPEED) {
             A.strideAcc += speed * dt;
-            if (A.strideAcc >= STRIDE_LEN) {
-                A.strideAcc = 0;
+            if (A.strideAcc >= CONFIG.CAVE_FOOTSTEP_STRIDE_LEN) {
+                // item 465: subtract the stride length (keep the remainder)
+                // rather than hard-resetting to 0 — matches player.js's dust
+                // accumulator exactly, so the two never drift apart even over
+                // a long walk.
+                A.strideAcc -= CONFIG.CAVE_FOOTSTEP_STRIDE_LEN;
                 A.lastFootFoot ^= 1;
                 playFootstep(footSurface(cam.x, cam.z), A.lastFootFoot);
                 footThisFrame = 1;
             }
         } else {
-            A.strideAcc = STRIDE_LEN * 0.5; // primed so the next step lands promptly
+            A.strideAcc = Math.min(A.strideAcc, CONFIG.CAVE_FOOTSTEP_STRIDE_LEN * 0.5); // primed so the next step lands promptly
         }
     } else {
-        A.strideAcc = STRIDE_LEN * 0.5;
+        A.strideAcc = Math.min(A.strideAcc, CONFIG.CAVE_FOOTSTEP_STRIDE_LEN * 0.5);
     }
 
     publishStats({

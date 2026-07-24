@@ -46,6 +46,7 @@ import { beginCatchSequence } from './capture.js';
 import { showBackBonusFlourish } from './targeting.js';
 import { caveRicochet, caveThrowUpAngle, tunnelBackDot, caveCaptureBonus } from './caves/caves-gameplay.js';
 import { zoneAt } from './zones/zones.js';
+import { triggerScreenShake, updateScreenShake } from './camera-shake.js';
 
 // Scratch objects — reused every frame so streak/ring orientation never allocates.
 const _unitZ = new THREE.Vector3(0, 0, 1);
@@ -139,35 +140,6 @@ function disposeProjectileFx(p) {
         try { p.ring.material.dispose(); } catch (e) {}
         p.ring = null;
     }
-}
-
-/* ------------------------------------------------------------
-   Item 353 — subtle screen-shake on a big ricochet chain. Camera
-   roll (rotation.z) is left untouched by PointerLockControls (which
-   only ever reads/writes pitch+yaw), so a small transient nudge here
-   never fights the look controls; it decays back to 0 on its own.
-   ------------------------------------------------------------ */
-let shakeMag = 0, shakeDur = 0, shakeT = 0;
-function triggerScreenShake(mag, dur) {
-    shakeMag = Math.max(shakeMag, mag);
-    shakeDur = dur;
-    shakeT = 0;
-}
-function updateScreenShake(dt) {
-    const cam = state.camera;
-    if (!cam) return;
-    if (shakeDur <= 0) {
-        if (cam.rotation.z !== 0) cam.rotation.z *= Math.max(0, 1 - dt * 10);
-        return;
-    }
-    shakeT += dt;
-    if (shakeT >= shakeDur) {
-        shakeDur = 0;
-        cam.rotation.z = 0;
-        return;
-    }
-    const k = 1 - shakeT / shakeDur;
-    cam.rotation.z = Math.sin(shakeT * 53) * shakeMag * k;
 }
 
 // items 248/262/352 — surface read at a ground-miss point: snow/ice zones puff

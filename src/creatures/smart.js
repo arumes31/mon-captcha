@@ -20,7 +20,7 @@
 
 import { CONFIG } from '../config.js';
 import { state } from '../state.js';
-import { spawnTrailMote } from '../particles.js';
+import { spawnTrailMote, spawnParticleBurst } from '../particles.js';
 import { playAlarmChirp, playLegendarySting } from '../audio.js';
 
 /* ------------------------------------------------------------
@@ -142,6 +142,11 @@ export function alarmFrom(caller, nowS) {
     if (alerted && nowS > (state.lastChirpAt || 0) + 1.2) {
         state.lastChirpAt = nowS;
         playAlarmChirp();
+        // item 463: a bright "alert" burst at the CALLER, precisely on the same
+        // gated frame the chirp actually fires — playAlarmChirp previously only
+        // paired with a behavior change (kin scattering), with no on-screen tell
+        // marking the alarm call's own onset.
+        spawnParticleBurst(caller.pos.x, caller.pos.y + caller.centerY, caller.pos.z, 0xfff3c4, CONFIG.ALARM_CHIRP_BURST_COUNT, caller.def.particle);
     }
 }
 

@@ -53,10 +53,31 @@ function spawnGroundMark(x, y, z, o) {
     state.ripples.push({ mesh: ring, age: 0, life: o.life, from: o.fromScale, to: o.toScale, fromOpacity: o.opacity });
 }
 
-export function spawnWaterRipple(x, z, level = CONFIG.POND_WATER_LEVEL) {
+// item 478: sizeMul lets a caller scale the ring to the "weight" of what
+// fell in — capture.js sizes it by the caught creature's tier (a bare ball
+// vs. a legendary settling in still stays 1x for every OTHER caller: rain
+// splashes, the ambient fish-ripple, projectiles.js's own ball-miss splash).
+export function spawnWaterRipple(x, z, level = CONFIG.POND_WATER_LEVEL, sizeMul = 1) {
     spawnGroundMark(x, level + 0.03, z, {
-        color: 0xcfeffb, opacity: 0.75, fromScale: 0.3, toScale: 2.9, life: 0.9,
+        color: 0xcfeffb, opacity: 0.75, fromScale: 0.3 * sizeMul, toScale: 2.9 * sizeMul, life: 0.9,
         renderOrder: 2, // draw after water & foam so the ring never sorts under them
+    });
+}
+
+// items 466/473: a small "sonar ping"-style expanding ring, precisely
+// time-locked to the audio cue that triggers it (echo-locator calls,
+// singing-crystal chimes) — a THIRD flavor of the same shared ripple-ring
+// mesh/pool/cleanup as the water ripple and ground decal above, just
+// floating at an arbitrary world Y (mid-air, not a water/ground surface)
+// rather than a fixed one.
+export function spawnFxRing(x, y, z, color, opts = {}) {
+    spawnGroundMark(x, y, z, {
+        color,
+        opacity: opts.opacity !== undefined ? opts.opacity : 0.6,
+        fromScale: opts.fromScale !== undefined ? opts.fromScale : 0.25,
+        toScale: opts.toScale !== undefined ? opts.toScale : 1.8,
+        life: opts.life !== undefined ? opts.life : 0.4,
+        renderOrder: 3,
     });
 }
 

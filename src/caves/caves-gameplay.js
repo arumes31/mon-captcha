@@ -39,6 +39,7 @@ import { spawnParticleBurst } from '../particles.js';
 import { playRicochet, playRockRumble, playCaveBallPickup } from '../audio.js';
 import { makeCaptureBall, makeFlashSprite, removeBall } from '../ball.js';
 import { showHintToast } from '../ui.js';
+import { triggerScreenShake } from '../camera-shake.js';
 
 const DUST = 0xb59a72;
 
@@ -285,6 +286,19 @@ function updatePickups(dt, elapsed) {
             state.caveBall = true;
             spawnParticleBurst(pk.x, pk.baseY, pk.z, 0x9ffff0, 20);
             if (!state.isPaused) playCaveBallPickup();
+            // item 472: a bright glint pop exactly on the pickup sound's frame —
+            // pushed straight into the shared state.captureFlashes pool (already
+            // ticked unconditionally every frame by capture.js's updateFlashes(),
+            // regardless of which module spawned the entry) rather than importing
+            // capture.js directly, which would create a circular import (capture.js
+            // already imports THIS module for maybeCollapse/caveCaptureBonus).
+            const glint = makeFlashSprite(0xccfff5, 0.25);
+            glint.position.set(pk.x, pk.baseY + 0.15, pk.z);
+            glint.renderOrder = 6;
+            if (state.scene) {
+                state.scene.add(glint);
+                state.captureFlashes.push({ sprite: glint, age: 0, life: 0.35, from: 0.25, to: 1.3 });
+            }
             showHintToast('Grotto Ball found — steadier capture', '#6ff0e0');
         }
     }
@@ -341,6 +355,11 @@ export function triggerCaveCollapse(cx, cy, cz) {
     }
     _collapses.push({ rocks, age: 0, dustT: 0, cx, cz });
     playRockRumble();
+    // item 467: rock-rumble screen-shake, right alongside the already-synced
+    // falling rocks + dust + screen-dust tint above (all fired in this one
+    // synchronous call, so nothing here needed re-timing — a shake was simply
+    // the one missing beat).
+    triggerScreenShake(CONFIG.ROCK_RUMBLE_SHAKE_MAG, CONFIG.ROCK_RUMBLE_SHAKE_TIME);
     screenDust();
 }
 

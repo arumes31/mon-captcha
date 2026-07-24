@@ -25,7 +25,7 @@ import { CONFIG } from '../config.js';
 import { state } from '../state.js';
 import { getGroundY, isWaterAt, caveConfine, caveCeilingAt, sampleCave } from '../heightfield.js';
 import { collidesObstacle } from '../player.js';
-import { spawnParticleBurst } from '../particles.js';
+import { spawnParticleBurst, spawnFxRing } from '../particles.js';
 import { animateCreature } from './animate.js';
 import { updateLegendaryPresence } from './smart.js';
 import { playBatScatter, playEchoCall } from '../audio.js';
@@ -137,7 +137,17 @@ function roost(c, dt, elapsed, playerPos, dp) {
     const R = c.roost, home = c.roostHome;
     if (dp < SCATTER_R) {
         R.alarmUntil = elapsed + 3.0 + Math.random() * 1.6;
-        if (elapsed > (R.soundAt || 0)) { R.soundAt = elapsed + 1.6; if (!state.isPaused) playBatScatter(); }
+        // item 463: a paired flutter-puff at THIS bat, precisely on the same
+        // gated frame playBatScatter() actually fires (previously only the
+        // sound + the (gradual) frantic-flight behavior change — no immediate
+        // on-screen tell at the exact instant of the scatter).
+        if (elapsed > (R.soundAt || 0)) {
+            R.soundAt = elapsed + 1.6;
+            if (!state.isPaused) {
+                playBatScatter();
+                spawnParticleBurst(c.pos.x, c.pos.y + c.centerY, c.pos.z, 0x8a7a68, CONFIG.BAT_SCATTER_BURST_COUNT);
+            }
+        }
     }
     if (elapsed < R.alarmUntil) {                     // ---- scattering: frantic flight ----
         if (Math.random() < 0.14) c.heading += (Math.random() * 2 - 1) * 1.9;
@@ -365,8 +375,17 @@ function echo(c, dt, elapsed, playerPos, dp) {
     if (elapsed >= c._nextCall && c._callT <= 0) {
         c._callT = 1.5;
         c._nextCall = elapsed + 3.4 + Math.random() * 3.0;
-        spawnParticleBurst(c.pos.x, c.pos.y + c.centerY, c.pos.z, c.def.particle, 12); // sonar ring
-        if (dp < 30 && !state.isPaused) playEchoCall();
+        spawnParticleBurst(c.pos.x, c.pos.y + c.centerY, c.pos.z, c.def.particle, 12); // sonar ring (motes)
+        // item 466: an actual expanding ripple-ring, gated the SAME as the audio
+        // (dp < 30, not paused) so it's a precise visual pair for playEchoCall's
+        // onset — distinct from the mote burst above, which fires on every call
+        // regardless of the player's distance.
+        if (dp < 30 && !state.isPaused) {
+            playEchoCall();
+            spawnFxRing(c.pos.x, c.pos.y + c.centerY, c.pos.z, c.def.particle, {
+                fromScale: 0.3, toScale: CONFIG.ECHO_RIPPLE_MAX_SCALE, life: CONFIG.ECHO_RIPPLE_LIFE, opacity: 0.5,
+            });
+        }
     }
     let calling = false;
     if (c._callT > 0) { c._callT -= dt; calling = c._callT > 0.2; }

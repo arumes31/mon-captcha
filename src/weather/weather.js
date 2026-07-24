@@ -41,6 +41,8 @@ import { spawnWaterRipple } from '../particles.js';
 import { playThunder } from '../audio.js';
 import { WEATHER_STATES, WEATHER_BIAS, WEATHER_DEFAULT_BIAS, WEATHER_LOW_TIER_STATES, DAY_NIGHT, ZONE_SKY_BIAS, RAINBOW_FROM } from './weather-data.js';
 import { initDayNight, updateDayNight, triggerRainbow, disposeDayNight, dayNightDebug } from './daynight.js';
+import { triggerScreenShake } from '../camera-shake.js';
+import { musicDuckAmount, musicMoodWarmth } from '../music.js';
 
 const RAIN_MAX = 1200;
 const SNOW_MAX = 1500;
@@ -64,6 +66,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
 const _cA = new THREE.Color(), _cB = new THREE.Color(), _cC = new THREE.Color(), _cCave = new THREE.Color();
 const _cHemiSky = new THREE.Color(), _cHemiGnd = new THREE.Color(), _cTmp = new THREE.Color(), _cZone = new THREE.Color();
+const _cGrade = new THREE.Color(); // item 480: mood/tense color-grade scratch
 // Phase 2h: identity cave overrides so weather is byte-identical outdoors when
 // caves-atmos hasn't set state.caveFx yet (or the player is out in the open).
 const CAVE_FX_ID = { ambientMul: 1, exposureMul: 1, fogK: 0, fogDensity: 0, fogColor: 0x0b1016 };
@@ -323,8 +326,16 @@ export function updateWeather(dt, elapsed) {
     const flash = W.flashK * (0.75 + 0.25 * Math.abs(Math.sin(elapsed * 55))); // bright, flickering
     if (W.boltLine) W.boltLine.material.opacity = flash;
 
+    // item 471: a mood crossfade briefly dips exposure/hemi ("holds its breath")
+    const duck = musicDuckAmount();
+    // item 480: mood-warmth color grade, pushed further cool/tense while a
+    // breakout's adrenaline is fresh (state.breakoutTenseT, set by capture.js).
+    const tenseT = state.breakoutTenseT || 0;
+    const tense = tenseT > 0 ? Math.min(1, tenseT / CONFIG.BREAKOUT_TENSE_TIME) : 0;
+    const grade = musicMoodWarmth() * CONFIG.MOOD_COLOR_GRADE_STRENGTH - tense * CONFIG.MOOD_COLOR_GRADE_STRENGTH * 1.5;
+
     // ---- apply sky / fog / lights ----
-    applyEnvironment(P, flash, DN, rainAmt);
+    applyEnvironment(P, flash, DN, rainAmt, duck, grade);
 
     // ---- ambient signals for atmosphere.js's ground/cloud/particle response ----
     state.weatherMood = P.sunMul;                       // 0=stormy .. 1=clear
@@ -343,7 +354,7 @@ function precipAmt(A, B, t, kind) {
     return lerp(a, b, t);
 }
 
-function applyEnvironment(P, flash, DN, rainAmt) {
+function applyEnvironment(P, flash, DN, rainAmt, duck = 0, grade = 0) {
     const scene = state.scene;
     // Phase 2h: cave overrides (darkness / eye-adaptation exposure / localized
     // haze). IDENTITY (mul 1, fogK 0) whenever the player is out in the open, so
@@ -386,18 +397,30 @@ function applyEnvironment(P, flash, DN, rainAmt) {
             dens += (fx.fogDensity - dens) * fx.fogK;
             _cB.lerp(_cCave.setHex(fx.fogColor), fx.fogK);
         }
+        // item 480: subtle mood/tense color-grade — a warm or cool nudge riding
+        // on top of everything else the fog color already folds in.
+        if (Math.abs(grade) > 0.0005) {
+            _cB.lerp(_cGrade.setHex(grade > 0 ? 0xffdcb0 : 0xb0d0ff), Math.min(0.5, Math.abs(grade)));
+        }
         scene.fog.density = dens;
         scene.fog.color.copy(_cB);
     }
 
-    if (state.sun) state.sun.intensity = W.base.sun * DN.sunMul * P.sunMul + flash * 4.5;
-    if (state.hemi) state.hemi.intensity = W.base.hemi * DN.hemiMul * P.hemiMul * fx.ambientMul + flash * 6.5;
-    if (state.skyFill) state.skyFill.intensity = W.base.skyFill * DN.skyFillMul * P.skyFillMul * fx.ambientMul + flash * 3.0;
+    // item 471: "holds its breath" — a brief exposure/hemi dip while a mood
+    // crossfade is actively underway (music.js's musicDuckAmount()).
+    const duckMul = 1 - CONFIG.MUSIC_DUCK_VISUAL_DIP * duck;
+
+    if (state.sun) state.sun.intensity = W.base.sun * DN.sunMul * P.sunMul * duckMul + flash * 4.5;
+    if (state.hemi) state.hemi.intensity = W.base.hemi * DN.hemiMul * P.hemiMul * fx.ambientMul * duckMul + flash * 6.5;
+    if (state.skyFill) state.skyFill.intensity = W.base.skyFill * DN.skyFillMul * P.skyFillMul * fx.ambientMul * duckMul + flash * 3.0;
     // item 16: zone palette bias on exposure — a small additive nudge (Ember
     // Flats reads a touch brighter/hotter, Frozen Reaches a touch cooler/dimmer)
     // rather than one flat global exposure value
     const zoneExpBias = 1 + (zoneBias ? zoneBias.exposureMul : 0);
-    if (state.renderer) state.renderer.toneMappingExposure = W.base.exposure * DN.exposureMul * P.exposureMul * fx.exposureMul * zoneExpBias + flash * 0.7;
+    // item 480: the same warm/cool grade nudges exposure a touch too, so a
+    // "tense" moment reads slightly stopped-down, not just cooler-tinted.
+    const gradeExpBias = 1 + grade * 0.4;
+    if (state.renderer) state.renderer.toneMappingExposure = W.base.exposure * DN.exposureMul * P.exposureMul * fx.exposureMul * zoneExpBias * gradeExpBias * duckMul + flash * 0.7;
 
     // item 9: hemisphere sky/ground colour retint per weather state, cooling
     // further toward the night tint as the rare event deepens
@@ -425,10 +448,23 @@ function triggerLightning(elapsed) {
     W.flashK = 1.0;
     W.strikeCd = 2.5 + Math.random() * 6;
     spawnBolt(); // item 12: jagged bolt geometry alongside the screen flash
-    // delayed thunder (one-shot); farther strike = longer delay, duller boom
+    // item 479: delayed thunder (one-shot); farther strike = longer delay,
+    // duller boom. The floor is now near-instant (a couple of frames) rather
+    // than a flat 300ms, so a genuinely CLOSE strike reads flash+boom as one
+    // frame-accurate event instead of an audibly-late echo of itself.
     const far = Math.random();
-    const delay = 300 + far * 2200;
-    setTimeout(() => { if (!state.disposed) playThunder(far); }, delay);
+    const delay = CONFIG.THUNDER_DELAY_MIN_MS + far * CONFIG.THUNDER_DELAY_SPAN_MS;
+    setTimeout(() => {
+        if (state.disposed) return;
+        playThunder(far);
+        // item 462: screen-shake scaled to thunderclap intensity — only a
+        // genuinely nearby clap shakes the camera (shares camera-shake.js's
+        // bus with the ricochet/rock-rumble/golem-stomp triggers).
+        if (far < CONFIG.THUNDER_SHAKE_FAR_CUTOFF) {
+            const near = 1 - far / CONFIG.THUNDER_SHAKE_FAR_CUTOFF;
+            triggerScreenShake(CONFIG.THUNDER_SHAKE_MAG * near, CONFIG.THUNDER_SHAKE_TIME);
+        }
+    }, delay);
 }
 
 /* ------------------------------------------------------------
