@@ -44,6 +44,11 @@ function shuffle(arr, rng) {
     return arr;
 }
 
+// item 391: keeps a branchBias-shifted probability inside a sane [0.1, 0.9]
+// band regardless of CONFIG.CAVE_BRANCH_BIAS_STRENGTH tuning, so a roll never
+// collapses to "always"/"never".
+function clamp01(p) { return Math.max(0.1, Math.min(0.9, p)); }
+
 const FLOOR_CLAMP = 0.25; // dry tunnel floors stay above the outdoor water line (y=0)
 const MIN_HW = CONFIG.CAVE_MIN_NAV_HW; // Phase 2m: passable half-width floor everywhere
 const RIVER_ROCK_MARGIN = 1.3; // wall blend (0.85) + safety: a cave's rock must clear a river by this
@@ -83,7 +88,10 @@ function cavesOverlap(a, b) {
 
 // One meandering centreline + its per-node cross-section. Returns null if the
 // walk wanders into forbidden ground (water, mountain, vent, out of bounds).
-function makeTunnel(sx, sz, bearing, rng, deps, forbid) {
+// branchBias (item 391, default 0): this world's seeded "branchy vs linear"
+// cave-topology personality — nudges the chamber-count roll below (more
+// chambers = more potential branch/junction points downstream).
+function makeTunnel(sx, sz, bearing, rng, deps, forbid, branchBias = 0) {
     const { baseHeight } = deps;
     const steps = 13 + Math.floor(rng() * 8); // 13..20 segments
     const segLen = 1.25;
@@ -98,7 +106,7 @@ function makeTunnel(sx, sz, bearing, rng, deps, forbid) {
     }
     // 1-2 chambers: interior bulge indices
     const chIdx = [];
-    const nCh = 1 + (rng() < 0.65 ? 1 : 0);
+    const nCh = 1 + (rng() < clamp01(0.65 + branchBias) ? 1 : 0);
     for (let k = 0; k < nCh; k++) chIdx.push(2 + Math.floor(rng() * (pts.length - 4)));
     const phase = rng() * Math.PI * 2;
     const g0 = baseHeight(pts[0].x, pts[0].z);
@@ -226,7 +234,11 @@ function recomputeBounds(cave) {
 
 // Distribute the Phase 2f topology features across the world's caves. Uses its
 // own seeded rng so the base layout / wet / theme streams stay stable.
-function assignTopology(placed, r, forbid) {
+// branchBias (item 391, default 0): a LINEAR-biased seed favours the clean
+// 'through' route more often and a 2nd heavy feature less often; a BRANCHY
+// seed does the opposite — layered on top of the existing feature menu below,
+// never adding a new feature type.
+function assignTopology(placed, r, forbid, branchBias = 0) {
     if (!placed.length) return;
     const isCross = c => c.topo && c.topo.features.includes('underwater');
     const dry = placed.filter(c => !c.wet && !isCross(c) && c.paths[0].length >= 6);
@@ -248,10 +260,10 @@ function assignTopology(placed, r, forbid) {
     const nextHeavy = () => { if (hi >= hbag.length) { hbag = shuffle(heavy.slice(), r); hi = 0; } return hbag[hi++]; };
     for (const c of dry) {
         const feats = new Set();
-        if (c !== cath && r() < 0.35) feats.add('through');
+        if (c !== cath && r() < clamp01(0.35 - branchBias)) feats.add('through');
         else {
             feats.add(nextHeavy());
-            if (r() < 0.4) feats.add(nextHeavy());
+            if (r() < clamp01(0.4 + branchBias)) feats.add(nextHeavy());
         }
         if (r() < 0.7) feats.add(light[Math.floor(r() * light.length)]);
         applyFeatureSet(c, feats, r, forbid);
@@ -278,6 +290,15 @@ export function placeCaves(deps) {
     const { L, PARTITION, MOUNTAINS, baseHeight, isWaterAt, seed, half, pondR } = deps;
     const { riverPointAt, riverTangent, riverAt, riverSpan } = deps;
     const rng = mulberry32((seed ^ 0xca7e5) >>> 0);
+    // item 391: seed-driven cave-network TOPOLOGY personality — independent
+    // stream (own salt) so it never perturbs the base placement `rng` above.
+    // -CAVE_BRANCH_BIAS_STRENGTH..+CAVE_BRANCH_BIAS_STRENGTH: negative worlds
+    // trend LINEAR (fewer branches/chambers, more clean through-routes),
+    // positive worlds trend BRANCHY (more side branches, more multi-chamber
+    // tunnels, more secondary heavy features) — layered on top of the
+    // existing makeBranch()/makeTunnel() parameters, never replacing them.
+    const branchRng = mulberry32((seed ^ 0x8b2c31) >>> 0);
+    const branchBias = (branchRng() * 2 - 1) * CONFIG.CAVE_BRANCH_BIAS_STRENGTH;
     const rMin = pondR + 12;
     const rMax = half - 15;
     const count = 2 + Math.floor(rng() * 3); // 2..4 caves
@@ -341,10 +362,10 @@ export function placeCaves(deps) {
                 heading = Math.atan2(-sz, -sx) + (rng() - 0.5) * 1.4; // toward the hub, then wander
             }
             if (forbid(sx, sz) || nearOther(sx, sz)) continue;
-            const tun = makeTunnel(sx, sz, heading, rng, deps, (x, z) => forbid(x, z) || nearOther(x, z));
+            const tun = makeTunnel(sx, sz, heading, rng, deps, (x, z) => forbid(x, z) || nearOther(x, z), branchBias);
             if (!tun) continue;
             const paths = [tun.nodes];
-            if (tun.chambers.length && rng() < 0.55) {
+            if (tun.chambers.length && rng() < clamp01(0.55 + branchBias)) {
                 const br = makeBranch(tun, tun.chambers[Math.floor(rng() * tun.chambers.length)], rng, forbid);
                 if (br) paths.push(br);
             }
@@ -390,7 +411,7 @@ export function placeCaves(deps) {
     // chokes/belly-crawls/talus/breakdown. The WET cave and the river-crossing
     // are left as their own features (pool / under-river) and only take light,
     // pool-safe extras. All shapes stay single-valued (see caves-shapes.js).
-    assignTopology(placed, mulberry32((seed ^ 0xf20f) >>> 0), forbid);
+    assignTopology(placed, mulberry32((seed ^ 0xf20f) >>> 0), forbid, branchBias);
     // Clamp feature floors (pits/shafts/under-river) to the deepest level the
     // terrain builder can still stack a VISIBLE voxel for (columns floor at
     // y=-2.0 -> lowest renderable top ~-1.5). Keeps getGroundY exact and never
@@ -437,5 +458,9 @@ export function placeCaves(deps) {
     // stream so base geometry / theme distribution above stay byte-identical.
     const wr = mulberry32((seed ^ 0x2fa7e) >>> 0);
     for (const c of kept) if (c.wet) designFloodedWater(c, wr);
+    // item 391: tag this world's branchiness personality onto every cave —
+    // cheap, ?probe-visible (CAVES[i]._branchBias) confirmation that it
+    // differs across seeds, with no new export needed.
+    for (const c of kept) c._branchBias = branchBias;
     return kept;
 }

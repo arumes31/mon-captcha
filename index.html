@@ -152,6 +152,15 @@
                     <label for="pref-hud-scale">HUD size</label>
                     <input type="range" id="pref-hud-scale" min="0.85" max="1.4" step="0.05" value="1">
                 </div>
+                <!-- item 395: shareable ?seed=N link — round-trips CONFIG.WORLD_SEED
+                     back into the URL so a player can show off/compare this world. -->
+                <div class="a11y-row a11y-row-share">
+                    <label for="share-seed-input">Share this world</label>
+                    <div class="share-seed-controls">
+                        <input type="text" id="share-seed-input" readonly aria-label="Shareable world link">
+                        <button id="share-seed-btn" type="button">Copy Link</button>
+                    </div>
+                </div>
                 <button id="a11y-close-btn" type="button">Done</button>
             </div>
         </div>

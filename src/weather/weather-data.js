@@ -91,6 +91,12 @@ export const WEATHER_DEFAULT_BIAS = [['clear', 4], ['overcast', 2], ['windy', 1]
 // often) without paying for particles.
 export const WEATHER_LOW_TIER_STATES = new Set(['clear', 'overcast', 'windy', 'fog']);
 
+// item 393: state groupings used by weather.js's rollNext() to apply a
+// seed-driven weather PERSONALITY on top of (never replacing) the fixed
+// per-zone WEATHER_BIAS tables above — some seeds trend stormier, some drier.
+export const WEATHER_STORMY = new Set(['rain', 'thunderstorm', 'snowfall', 'overcast', 'fog']);
+export const WEATHER_CALM = new Set(['clear', 'windy']);
+
 /* ============================================================
    Day/Night & Celestial (graphics-backlog items 1,2,4,5,10,17,
    440,445) — pure data, applied by weather.js's day/night layer.

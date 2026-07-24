@@ -408,4 +408,29 @@ export const CONFIG = {
     // 129-176) — a single new tunable added by that pass; everything else
     // reused existing per-module magic numbers rather than growing this file.
     CAVE_VIGNETTE_MAX: 0.4, // item 173: peak screen-vignette opacity at the cave-mouth "eyes adjusting" transient
+
+    // ============================================================
+    // Section 23 — Procedural Variety & Seed Diversity pass
+    // (world-graphics-improvements.md items 389-402). Appended block;
+    // nothing above this line was touched for this pass. Every new
+    // stream this pass adds uses its OWN independent mulberry32 salt
+    // (never reuses/reorders an existing rng draw sequence), so all
+    // 9 earlier passes' seeded layouts are otherwise undisturbed.
+    // ============================================================
+    ZONE_TWIN_CHANCE: 0.15,          // item 389: rare chance one non-anchor zone claims a 2nd sector (displacing a different one), beyond the existing full Fisher-Yates shuffle
+    MOUNTAIN_SPIRE_SHAPE_EXP: 1.95,  // item 390: "spire" massif archetype's peak curve exponent (tall, narrow, near-zero secondary lobe)
+    MOUNTAIN_MESA_SHAPE_EXP: 1.15,   // item 390: "mesa" massif archetype's peak curve exponent (broad, flatter-topped)
+    CAVE_BRANCH_BIAS_STRENGTH: 0.4,  // item 391: how far a seed's "branchy vs linear" cave-topology personality shifts branch/chamber/feature odds
+    WEATHER_PERSONALITY_STRENGTH: 0.5, // item 393: how far a seed's "stormy vs dry" weather personality skews WEATHER_BIAS's per-zone weights
+    CREATURE_RARITY_SKEW_MAX: 0.8,   // item 394: max skew a "lucky seed" applies to uncommon/rare fill weights (commons/win-fuel deck untouched)
+    CREATURE_LEGENDARY_BONUS_CHANCE: 0.12, // item 394: rare chance of one extra bonus legendary on a very lucky seed
+    ZONE_PALETTE_HUE_JITTER: 0.035,  // item 396: max per-seed, per-zone hue nudge (fraction of 360deg) applied once to each zone's authored palette
+    ZONE_PALETTE_LIGHT_JITTER: 0.05, // item 396: max per-seed, per-zone lightness nudge applied alongside the hue nudge
+    RIVER_OXBOW_CHANCE: 0.35,        // item 397: odds this seed's main river gets a rare wide "lazy bend" belly (an oxbow-like slow, wide pool)
+    RIVER_OXBOW_WIDTH_MUL: 2.2,      // item 397: peak extra channel width at the oxbow belly's centre
+    CAVE_GEM_LUCKY_CHANCE: 0.15,     // item 398: odds this seed's caves are ALL unusually gem-rich (a discoverable "lucky seed" moment)
+    CAVE_GEM_LUCKY_MUL: 2.2,         // item 398: crystal-cluster count multiplier on a gem-lucky seed
+    SEED_THUMBNAIL_MAX_DIM: 256,     // item 399: max width/height (px) for the offline seed-preview thumbnail capture (foundation only)
+    CLOUD_STREAK_BIAS_STRENGTH: 0.22, // item 400: how far a seed shifts the streaky-vs-puffy cloud-cluster profile threshold, beyond density-only variety
+    FLORA_SPECIES_MIX_JITTER: 0.5,   // item 401: max per-seed, per-zone-per-species weight skew within a zone's existing allowed tree table
 };

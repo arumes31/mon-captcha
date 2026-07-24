@@ -20,6 +20,7 @@
    for the primary it reproduces the old inline cone EXACTLY.
    ============================================================ */
 
+import { CONFIG } from '../config.js';
 import { worldNoise, mulberry32 } from '../random.js';
 
 // Smallest signed angular difference a-b in (-PI, PI].
@@ -50,7 +51,10 @@ export function mountainRise(x, z, mountains) {
             const am = Math.atan2(mdz, mdx);
             const ridges = 0.82 + 0.22 * worldNoise(Math.cos(am) * 4 + 50, Math.sin(am) * 4 + 50, 2, 2.0, 0.5);
             const t = 1 - dm / mt.r;
-            rise += mt.peak * Math.pow(t, 1.55) * ridges
+            // item 390: non-primary massifs may carry their own seeded shapeExp
+            // (see the ARCHETYPE roll in placeMountains below) — mt.shapeExp is
+            // undefined for the primary, so `|| 1.55` keeps it byte-identical.
+            rise += mt.peak * Math.pow(t, mt.shapeExp || 1.55) * ridges
                 + worldNoise(x * 0.35 + 9, z * 0.35 - 9, 2, 2.0, 0.5) * 0.5 * t; // craggy detail
         }
         if (!mt.primary && mt.subAng !== undefined) {
@@ -94,8 +98,25 @@ export function placeMountains(deps) {
         // item 123: a seeded secondary lobe direction + relative height (0.35-0.6
         // of the main peak) so this massif reads as a ridgeline, not a lone cone.
         const subAng = ang + (r() < 0.5 ? 1 : -1) * (0.9 + r() * 0.7);
-        const subH = 0.35 + r() * 0.25;
-        list.push({ x, z, r: rr, peak, primary: false, subAng, subH });
+        let subH = 0.35 + r() * 0.25;
+        // item 390: seeded silhouette ARCHETYPE, on top of item 123's ridgeline
+        // lobe — four recipes so a seed's extra massifs read as more than "one
+        // dominant cone rescaled". The PRIMARY alpine peak never gets one (no
+        // shapeExp field -> mountainRise's `|| 1.55` default keeps it exactly
+        // the byte-identical single-peak formula this file's own header
+        // promises):
+        //   spire : tall, narrow, near-zero secondary lobe (one dramatic tooth)
+        //   twin  : a near-equal-height secondary lobe (reads as two peaks)
+        //   ridge : the original Phase 2m default (moderate secondary lobe)
+        //   mesa  : broad, flatter-topped silhouette (low shape exponent)
+        const archRoll = r();
+        let shapeExp;
+        let noSub = false;
+        if (archRoll < 0.22) { shapeExp = CONFIG.MOUNTAIN_SPIRE_SHAPE_EXP; noSub = true; }
+        else if (archRoll < 0.47) { shapeExp = 1.55; subH = 0.75 + r() * 0.2; }
+        else if (archRoll < 0.74) { shapeExp = 1.55; /* ridge: item 123 defaults above */ }
+        else { shapeExp = CONFIG.MOUNTAIN_MESA_SHAPE_EXP; subH = 0.5 + r() * 0.2; }
+        list.push({ x, z, r: rr, peak, primary: false, subAng: noSub ? undefined : subAng, subH, shapeExp });
         return true;
     };
 

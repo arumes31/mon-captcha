@@ -1458,6 +1458,63 @@ body.touch-mode #compass {
     accent-color: var(--amber-deep);
 }
 
+/* item 395: shareable ?seed=N link row — same stacked layout as the sliders
+   above, but the second line is a readonly URL field + copy button instead
+   of a range input. */
+.a11y-row-share {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.a11y-row-share label {
+    flex: none;
+}
+
+.share-seed-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.share-seed-controls input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 10px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.35);
+    border: 2px solid var(--ink-deep);
+    border-radius: 10px;
+    text-overflow: ellipsis;
+}
+
+.share-seed-controls button {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--ink-deep);
+    background: linear-gradient(180deg, #ffc169, var(--amber) 55%, #e8922e);
+    border: 2px solid var(--ink-deep);
+    border-radius: 10px;
+    box-shadow: 0 3px 0 var(--ink-deep);
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.share-seed-controls button:hover {
+    transform: translateY(-1px);
+}
+
+.share-seed-controls button:active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 var(--ink-deep);
+}
+
 #a11y-close-btn {
     display: block;
     width: 100%;

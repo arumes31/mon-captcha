@@ -285,6 +285,11 @@ function initA11yPanel() {
     ui.prefColorblind = document.getElementById('pref-colorblind');
     ui.prefBrightness = document.getElementById('pref-brightness');
     ui.prefHudScale = document.getElementById('pref-hud-scale');
+    // item 395: shareable ?seed=N link — reached via the same settings dialog
+    // (markup-guarded like every other a11y widget above).
+    ui.shareSeedInput = document.getElementById('share-seed-input');
+    ui.shareSeedBtn = document.getElementById('share-seed-btn');
+    initShareSeed();
 
     // Reflect loaded prefs onto the controls every cacheUI() call (cheap,
     // and correct if init() ever re-runs after destroy()).
@@ -365,6 +370,73 @@ function closeA11yPanel() {
     document.removeEventListener('keydown', onA11yKeydown, true);
     if (a11yPrevFocus && typeof a11yPrevFocus.focus === 'function') a11yPrevFocus.focus();
     a11yPrevFocus = null;
+}
+
+/* ------------------------------------------------------------
+   item 395: shareable ?seed=N link. CONFIG.WORLD_SEED is the exact
+   number rollWorldSeed() either rolled fresh or pinned from an
+   incoming ?seed=N (config.js) — round-tripping it back into a URL
+   reproduces this precise world (terrain/flora/clouds/river/weather
+   personality/etc. all key off this one number), so a player can
+   show off or compare a particularly nice-looking layout.
+   ------------------------------------------------------------ */
+function shareSeedUrl() {
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('seed', String(CONFIG.WORLD_SEED));
+        return url.toString();
+    } catch (e) { return ''; }
+}
+
+function initShareSeed() {
+    if (ui.shareSeedInput) ui.shareSeedInput.value = shareSeedUrl();
+    if (ui.shareSeedBtn && !ui.shareSeedBtn._wired) {
+        ui.shareSeedBtn._wired = true;
+        ui.shareSeedBtn.addEventListener('click', async () => {
+            const url = ui.shareSeedInput ? ui.shareSeedInput.value : shareSeedUrl();
+            let copied = false;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(url);
+                    copied = true;
+                }
+            } catch (e) { /* clipboard permission denied / insecure context — fall through */ }
+            if (!copied && ui.shareSeedInput) {
+                try {
+                    ui.shareSeedInput.select();
+                    ui.shareSeedInput.setSelectionRange(0, url.length);
+                    copied = document.execCommand('copy');
+                } catch (e) { /* no fallback available either */ }
+            }
+            showHintToast(copied ? 'World link copied!' : url, '#5ff0d0', 2600);
+        });
+    }
+}
+
+/* ------------------------------------------------------------
+   item 399: seed-preview thumbnail FOUNDATION — captures the current
+   frame's already-rendered canvas at a small, fixed max dimension as
+   a PNG data URL. No extra render pass (just a downscaled 2D-canvas
+   copy of what the renderer already drew), so it costs nothing until
+   called. Exposed on the public API (window.__captcha.getSeedThumbnail)
+   for a future seed-picker/gallery feature to build on — that
+   gallery/storage layer (picking WHEN to capture, where to store
+   {seed, dataUrl} pairs) is explicitly out of scope for this pass;
+   this is the minimal capture primitive it would sit on top of.
+   ------------------------------------------------------------ */
+export function captureSeedThumbnail(maxDim = CONFIG.SEED_THUMBNAIL_MAX_DIM) {
+    const src = state.renderer && state.renderer.domElement;
+    if (!src || !src.width || !src.height) return null;
+    const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
+    const w = Math.max(1, Math.round(src.width * scale));
+    const h = Math.max(1, Math.round(src.height * scale));
+    try {
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d');
+        ctx.drawImage(src, 0, 0, w, h);
+        return cv.toDataURL('image/png');
+    } catch (e) { return null; } // tainted-canvas edge case
 }
 
 /* ------------------------------------------------------------

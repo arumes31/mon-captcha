@@ -13,6 +13,7 @@
 
 import { CONFIG } from '../config.js';
 import { state, reuse } from '../state.js';
+import { mulberry32 } from '../random.js';
 import { getTerrainHeight, getGroundY, isWaterAt, riverSpan, riverPointAt, VENT, PARTITION, SPAWN, CAVES, caveAt } from '../heightfield.js';
 import { collidesObstacle } from '../player.js';
 import { PLAN_META } from './plans.js';
@@ -91,11 +92,24 @@ export function spawnCreatures() {
     for (let i = 0; i < 4; i++) deck.push(pick(fliers));
     deck.push(pick(legendaries));
     if (Math.random() < 0.5) deck.push(pick(legendaries)); // sometimes a second
+    // item 394: seed-driven creature-population skew — independent stream (own
+    // salt, keyed off CONFIG.WORLD_SEED rather than this file's Math.random()
+    // calls, so it never perturbs any placement roll below). Never touches
+    // CAPTURES_REQUIRED, the guaranteed commons/aquatics/fliers/legendary deck
+    // entries above, or the deck's total length (`target`) — it only skews
+    // which RARER types populate the existing weighted filler below, plus a
+    // rare chance of one extra bonus legendary, so a "lucky" seed feels more
+    // legendary-rich without changing win-condition feasibility at all.
+    const rarityRng = mulberry32((CONFIG.WORLD_SEED ^ 0x1e6a2d) >>> 0);
+    const raritySkew = rarityRng(); // this world's "rare-creature luck", [0,1)
+    state.creatureRaritySkew = raritySkew; // ?probe-visible via state
+    if (raritySkew > 1 - CONFIG.CREATURE_LEGENDARY_BONUS_CHANCE) deck.push(pick(legendaries));
     // guarantee cave life: at least one dweller per cave (biased inside below)
     const dwellers = CREATURE_TYPES.filter(t => CAVE_DWELLERS.has(t.id) && !t.aquatic);
     for (let i = 0; i < CAVES.length + 1 && dwellers.length; i++) deck.push(pick(dwellers));
 
-    const weights = { common: 6, uncommon: 3.4, rare: 1.6, legendary: 0 };
+    const raritySkewMul = 1 + raritySkew * CONFIG.CREATURE_RARITY_SKEW_MAX;
+    const weights = { common: 6, uncommon: 3.4 * raritySkewMul, rare: 1.6 * raritySkewMul, legendary: 0 };
     const fillPool = CREATURE_TYPES.filter(t => t.tier !== 'legendary' && !t.cave);
     let totalW = 0;
     for (const t of fillPool) totalW += weights[t.tier] || 1;
