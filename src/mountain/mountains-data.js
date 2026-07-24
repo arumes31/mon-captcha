@@ -33,18 +33,39 @@ function angDiff(a, b) {
 // Summed cone height at (x,z) over all mountains. Ridged (angular noise breaks
 // the silhouette) with craggy micro-detail — the exact formula the single peak
 // used, so the primary massif is byte-identical to the pre-2m terrain.
+//
+// Item 123 (silhouette variety): non-primary massifs additionally sum a SECOND,
+// offset lobe — a smaller sub-peak riding one flank of the main cone — so a
+// multi-mountain seed reads as a ridgeline rather than one dominant cone
+// repeated at a different size. The primary is deliberately left untouched:
+// it anchors the waterfall/basin/vent bearing math elsewhere and this file's
+// contract promises it stays byte-identical to the pre-2m single-peak formula.
 export function mountainRise(x, z, mountains) {
     let rise = 0;
     for (let i = 0; i < mountains.length; i++) {
         const mt = mountains[i];
         const mdx = x - mt.x, mdz = z - mt.z;
         const dm = Math.sqrt(mdx * mdx + mdz * mdz);
-        if (dm >= mt.r) continue;
-        const am = Math.atan2(mdz, mdx);
-        const ridges = 0.82 + 0.22 * worldNoise(Math.cos(am) * 4 + 50, Math.sin(am) * 4 + 50, 2, 2.0, 0.5);
-        const t = 1 - dm / mt.r;
-        rise += mt.peak * Math.pow(t, 1.55) * ridges
-            + worldNoise(x * 0.35 + 9, z * 0.35 - 9, 2, 2.0, 0.5) * 0.5 * t; // craggy detail
+        if (dm < mt.r) {
+            const am = Math.atan2(mdz, mdx);
+            const ridges = 0.82 + 0.22 * worldNoise(Math.cos(am) * 4 + 50, Math.sin(am) * 4 + 50, 2, 2.0, 0.5);
+            const t = 1 - dm / mt.r;
+            rise += mt.peak * Math.pow(t, 1.55) * ridges
+                + worldNoise(x * 0.35 + 9, z * 0.35 - 9, 2, 2.0, 0.5) * 0.5 * t; // craggy detail
+        }
+        if (!mt.primary && mt.subAng !== undefined) {
+            const sx = mt.x + Math.cos(mt.subAng) * mt.r * 0.55;
+            const sz = mt.z + Math.sin(mt.subAng) * mt.r * 0.55;
+            const sdx = x - sx, sdz = z - sz;
+            const sdm = Math.sqrt(sdx * sdx + sdz * sdz);
+            const sr = mt.r * 0.62;
+            if (sdm < sr) {
+                const sam = Math.atan2(sdz, sdx);
+                const sridges = 0.85 + 0.2 * worldNoise(Math.cos(sam) * 4 + 70, Math.sin(sam) * 4 + 70, 2, 2.0, 0.5);
+                const st = 1 - sdm / sr;
+                rise += mt.peak * mt.subH * Math.pow(st, 1.6) * sridges;
+            }
+        }
     }
     return rise;
 }
@@ -70,7 +91,11 @@ export function placeMountains(deps) {
         const dist = half - rr - (2 + r() * 4);  // sit just inside the rim
         const x = Math.cos(ang) * dist, z = Math.sin(ang) * dist;
         for (const mt of list) if ((x - mt.x) ** 2 + (z - mt.z) ** 2 < (rr + mt.r + 5) ** 2) return false;
-        list.push({ x, z, r: rr, peak, primary: false });
+        // item 123: a seeded secondary lobe direction + relative height (0.35-0.6
+        // of the main peak) so this massif reads as a ridgeline, not a lone cone.
+        const subAng = ang + (r() < 0.5 ? 1 : -1) * (0.9 + r() * 0.7);
+        const subH = 0.35 + r() * 0.25;
+        list.push({ x, z, r: rr, peak, primary: false, subAng, subH });
         return true;
     };
 
