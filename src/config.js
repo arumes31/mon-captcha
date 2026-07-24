@@ -198,6 +198,7 @@ export const CONFIG = {
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
 
+<<<<<<< HEAD
     // ------------------------------------------------------------
     // Zones — Biome Identity pass (backlog items 215-230). See
     // src/zones/zones-data.js (ZONE_DEFS fields) and src/zones/zones.js
@@ -224,4 +225,9 @@ export const CONFIG = {
     TREE_BARK_FLECK_CHANCE: 0.16,   // non-birch bark groove flecks, skipped on 'low' (item 188)
     CACTUS_FULL_BLOOM_CHANCE: 0.09, // rare full flower-crown vs. single blossom (item 191)
     BURNT_TREE_LANDMARKS: 1,        // seeded scorched/lightning-struck landmark count (item 196)
+
+    // ---- Creature visual-design pass (src/creatures/*, world-graphics-
+    // improvements.md section 18, items 303-323) — appended block, does not
+    // touch any existing key above.
+    CREATURE_TIER_TRAIL_RATE: { uncommon: 0.5, rare: 1.8 }, // item 303: ambient per-second tier-tell trail chance (legendary has its own richer aura; common gets none)
 };

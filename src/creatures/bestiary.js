@@ -241,11 +241,13 @@ export const CREATURE_TYPES = [
       gait: { t: 'dash', on: 0.35, off: 0.4, mul: 2.6 }, steer: { t: 'zigzag', freq: 5.4, amp: 0.9 }, react: { t: 'none' },
       flight: { t: 'dart' }, int: { dodge: 0.3 } },
     { id: 'duskOwl', name: 'Dusk Owl', plan: 'owl', tier: 'uncommon', scale: 0.95, speed: 1.5, hover: 2.4,
-      palette: { body: 0x7a6250, belly: 0xd9c6a8, accent: 0x51402f, eye: 0xffc94a }, particle: 0xc9b08a,
+      // item 310: nocturnal eye-shine — glow wired into the owl plan's eyes
+      palette: { body: 0x7a6250, belly: 0xd9c6a8, accent: 0x51402f, eye: 0xffc94a, glow: 0xffdb7a, glowI: 0.9 }, particle: 0xc9b08a,
       gait: { t: 'steady', mul: 1 }, steer: { t: 'waypoint', pause: 1.6 }, react: { t: 'freeze', r: 12 },
       flight: { t: 'glide' }, int: { dodge: 0.45, cover: true } },
     { id: 'gloamBat', name: 'Gloam Bat', plan: 'bat', tier: 'uncommon', scale: 0.6, speed: 1.8, hover: 1.9,
-      palette: { body: 0x3a3244, accent: 0x574a66, belly: 0x2a2433, eye: 0xd83a2e }, particle: 0x8a7aa8,
+      // item 310: nocturnal eye-shine — glow wired into the bat plan's eyes
+      palette: { body: 0x3a3244, accent: 0x574a66, belly: 0x2a2433, eye: 0xd83a2e, glow: 0xff5540, glowI: 1.1 }, particle: 0x8a7aa8,
       gait: { t: 'pulse', freq: 3.5, mul: 1.9 }, steer: { t: 'zigzag', freq: 6.2, amp: 1.2 }, react: { t: 'panic' },
       flight: { t: 'jitter' }, int: { dodge: 0.5, alarm: true } },
     { id: 'hummingbird', name: 'Jewel Hummingbird', plan: 'hummingbird', tier: 'rare', scale: 0.38, speed: 2.4, hover: 1.6, sparkle: true,
