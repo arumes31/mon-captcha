@@ -259,6 +259,16 @@ export function destroy() {
     state.windLeaves = null;
     state.detailInstances = null;
 
+    // Clean atmosphere-fx.js additions (cloud shadows, ground decals, POI
+    // props + campfire light) — reuse state.sharedBoxGeo (disposed once,
+    // below), each owns exactly one small material.
+    if (state.cloudShadowMesh) { disposeMesh(state.cloudShadowMesh); state.cloudShadowMesh = null; }
+    state.cloudShadowData = null;
+    if (state.groundDecalMesh) { disposeMesh(state.groundDecalMesh); state.groundDecalMesh = null; }
+    state.groundDecalData = null;
+    if (state.poiDetailMesh) { disposeMesh(state.poiDetailMesh); state.poiDetailMesh = null; }
+    if (state.poiFireLight) { if (state.scene) state.scene.remove(state.poiFireLight); state.poiFireLight = null; }
+
     if (state.sharedBoxGeo) { try { state.sharedBoxGeo.dispose(); } catch (e) {} state.sharedBoxGeo = null; }
     if (state.sharedInteriorGeo) { try { state.sharedInteriorGeo.dispose(); } catch (e) {} state.sharedInteriorGeo = null; }
 
