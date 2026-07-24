@@ -8,7 +8,7 @@
    Only transforms are animated: materials are shared caches.
    ============================================================ */
 
-export function animateCreature(c, elapsed, mul, hopK) {
+export function animateCreature(c, elapsed, mul, hopK, alertK = 0) {
     const ud = c.group.userData;
     const def = c.def;
     const move = Math.min(1, mul);
@@ -17,9 +17,12 @@ export function animateCreature(c, elapsed, mul, hopK) {
     switch (def.plan) {
         case 'slime': {
             const k = (def.gait && def.gait.t === 'hop') ? hopK : move * Math.abs(Math.sin(elapsed * 8 + c.phase));
-            ud.body.scale.y = 0.82 + k * 0.4;       // stretch in the air,
-            ud.body.scale.x = 1.15 - k * 0.25;      // squash on the ground
-            ud.body.scale.z = 1.15 - k * 0.25;
+            // item 317: a gentle idle jiggle at full rest so soft-bodies don't
+            // freeze at the static squashed pose between hops/moves
+            const idleJiggle = k < 0.03 ? Math.sin(elapsed * 2.1 + c.phase) * 0.035 : 0;
+            ud.body.scale.y = 0.82 + k * 0.4 + idleJiggle;       // stretch in the air,
+            ud.body.scale.x = 1.15 - k * 0.25 - idleJiggle * 0.5; // squash on the ground
+            ud.body.scale.z = 1.15 - k * 0.25 - idleJiggle * 0.5;
             break;
         }
         case 'bunny': {
@@ -92,6 +95,10 @@ export function animateCreature(c, elapsed, mul, hopK) {
             ud.legs[1].position.y = 0.14 + Math.max(0, -sway) * 0.1;
             c.group.rotation.z = sway * 0.08;
             ud.head.rotation.y = move < 0.05 && !c.taunting ? Math.sin(elapsed * 0.5 + c.phase) * 0.4 : 0;
+            // item 323: gem-eye shimmer (crystalGolem only)
+            if (def.id === 'crystalGolem' && ud.eyes && ud.eyes[0]) {
+                ud.eyes[0].material.emissiveIntensity = (def.palette.glowI || 1) * (0.7 + 0.3 * Math.sin(elapsed * 2.8 + c.phase));
+            }
             break;
         }
         case 'crab': {
@@ -101,6 +108,12 @@ export function animateCreature(c, elapsed, mul, hopK) {
             const snip = c.scaredUntil > elapsed ? Math.sin(elapsed * 14) * 0.4 : Math.sin(elapsed * 2.2 + c.phase) * 0.15;
             ud.claws[1].rotation.y = 0.2 + snip;    // claws snip faster when scared
             ud.claws[3].rotation.y = -0.2 - snip;
+            // item 323: gem-shell shimmer (rubyCrab only; harmless no-op glow
+            // otherwise since ud.shell's material only carries emissive when
+            // the palette sets `glow`)
+            if (def.id === 'rubyCrab' && ud.shell) {
+                ud.shell.material.emissiveIntensity = (def.palette.glowI || 1) * (0.65 + 0.35 * Math.sin(elapsed * 2.4 + c.phase));
+            }
             break;
         }
         case 'turtle': {
@@ -269,13 +282,77 @@ export function animateCreature(c, elapsed, mul, hopK) {
         }
     }
 
-    // Idle life: blinks via eye scale (shared across all archetypes)
+    // Item 304: a generic idle "breathing" scale pulse for resting creatures
+    // (shared across every plan that doesn't already drive ud.body.scale
+    // itself — slime/jelly/snail keep their own bespoke body-scale animation
+    // above, so this never fights them). Runs under the same LOD gate as the
+    // rest of this function (behavior.js only calls animateCreature within
+    // CREATURE_ANIM_LOD_DIST), so it's free at range for free.
+    if (ud.body && def.plan !== 'slime' && def.plan !== 'jelly' && def.plan !== 'snail') {
+        if (move < 0.08 && !c.taunting && !c.lookFrozen) {
+            ud.body.scale.setScalar(1 + Math.sin(elapsed * 1.7 + c.phase) * 0.02);
+        } else if (ud.body.scale.x !== 1) {
+            ud.body.scale.setScalar(1);
+        }
+    }
+
+    // Item 313/318: a quick "noticed you" tell — ears perk (bunny/fox) —
+    // before the creature actually bolts. `alertK` is a smoothed 0..1 fed in
+    // by behavior.js, driven by BOTH player proximity (item 313) and a peer
+    // creature passing close by (item 318's ambient ecosystem flinch).
+    if (alertK > 0.01) {
+        if (def.plan === 'bunny' && ud.ears) {
+            ud.ears[0].rotation.x -= alertK * 0.35;
+            ud.ears[1].rotation.x -= alertK * 0.35;
+        } else if (def.plan === 'fox' && ud.ears) {
+            ud.ears[0].rotation.x = -alertK * 0.5;
+            ud.ears[1].rotation.x = -alertK * 0.5;
+        }
+    }
+
+    // Idle life: blinks via eye scale (shared across all archetypes), plus a
+    // subtle alert widen layered on top of the same scale (item 313).
     if (ud.eyes && ud.eyes.length) {
         if (elapsed > c.nextBlink) {
             c.blinkUntil = elapsed + 0.12;
             c.nextBlink = elapsed + 2.4 + Math.random() * 3.4;
         }
         const bs = elapsed < c.blinkUntil ? 0.12 : 1;
-        for (const eye of ud.eyes) eye.scale.y = bs;
+        const widen = 1 + alertK * 0.3;
+        for (const eye of ud.eyes) {
+            eye.scale.y = bs * widen;
+            eye.scale.x = widen;
+            eye.scale.z = widen;
+        }
+    }
+}
+
+/* ------------------------------------------------------------
+   Item 321 — LOD-simplified rest pose. Called once, on the frame a
+   creature FIRST crosses into lod.js's `simpleSq` tier (secondary
+   animation gets dropped entirely from there on), so it settles into
+   a clean, recognizable silhouette instead of freezing mid-stride /
+   mid-lean on whatever frame it happened to cross the ring.
+   ------------------------------------------------------------ */
+const POSE_ARRAYS = [
+    'legs', 'wings', 'arms', 'tail', 'ears', 'claws', 'tentacles',
+    'antlers', 'crest', 'wingTips', 'stalks', 'shell', 'fins', 'paws',
+];
+export function resetPose(c) {
+    const ud = c.group.userData;
+    c.group.rotation.x = 0;
+    c.group.rotation.z = 0;
+    if (ud.body && c.def.plan !== 'slime' && c.def.plan !== 'jelly' && c.def.plan !== 'snail') {
+        ud.body.scale.set(1, 1, 1);
+    }
+    for (const key of POSE_ARRAYS) {
+        const v = ud[key];
+        if (!v) continue;
+        const arr = Array.isArray(v) ? v : [v];
+        for (const m of arr) {
+            if (!m || !m.rotation) continue;
+            m.rotation.x = 0;
+            m.rotation.z = 0;
+        }
     }
 }

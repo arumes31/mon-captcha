@@ -171,7 +171,7 @@ export const CREATURE_PLANS = {
 Object.assign(CREATURE_PLANS, {
     crab(P, add, ud) {
         ud.body = add(0.42, 0.18, 0.32, P.body, 0, 0.18, 0);
-        add(0.3, 0.08, 0.22, P.accent, 0, 0.3, 0);                                // shell top
+        ud.shell = add(0.3, 0.08, 0.22, P.accent, 0, 0.3, 0, { glow: P.glow, glowI: P.glowI }); // shell top (item 323 gem-shimmer target)
         ud.claws = [
             add(0.1, 0.08, 0.14, P.body, -0.3, 0.16, 0.16),                       // arm L
             add(0.14, 0.14, 0.16, P.accent, -0.36, 0.18, 0.3),                    // claw L
@@ -258,9 +258,9 @@ Object.assign(CREATURE_PLANS, {
             add(0.04, 0.05, 0.03, 0x0a0a0a, -0.08, 0.03, 0.1, { parent: ud.head, glow: P.glow, glowI: P.glowI }),
             add(0.04, 0.05, 0.03, 0x0a0a0a, 0.08, 0.03, 0.1, { parent: ud.head, glow: P.glow, glowI: P.glowI }),
         ];
-        ud.wings = [
-            add(0.4, 0.04, 0.26, P.accent, -0.32, 0.62, -0.04),
-            add(0.4, 0.04, 0.26, P.accent, 0.32, 0.62, -0.04),
+        ud.wings = [ // item 311: thin translucent membrane (light-through when backlit)
+            add(0.4, 0.04, 0.26, P.accent, -0.32, 0.62, -0.04, { trans: true, opacity: 0.82 }),
+            add(0.4, 0.04, 0.26, P.accent, 0.32, 0.62, -0.04, { trans: true, opacity: 0.82 }),
         ];
         ud.tail = [
             add(0.12, 0.12, 0.22, P.body, 0, 0.46, -0.32),
@@ -375,9 +375,9 @@ Object.assign(CREATURE_PLANS, {
         ud.tail = add(0.16, 0.05, 0.18, P.accent, 0, 0.16, -0.18, { rx: -0.35 });
         add(0.04, 0.1, 0.04, 0xf5a623, -0.07, 0.1, 0.04);                         // talons
         add(0.04, 0.1, 0.04, 0xf5a623, 0.07, 0.1, 0.04);
-        ud.eyes = [
-            add(0.07, 0.08, 0.03, P.eye, -0.07, 0.02, 0.13, { parent: ud.head }),
-            add(0.07, 0.08, 0.03, P.eye, 0.07, 0.02, 0.13, { parent: ud.head }),
+        ud.eyes = [ // item 310: nocturnal eye-shine (no-op unless the palette sets glow)
+            add(0.07, 0.08, 0.03, P.eye, -0.07, 0.02, 0.13, { parent: ud.head, glow: P.glow, glowI: P.glowI }),
+            add(0.07, 0.08, 0.03, P.eye, 0.07, 0.02, 0.13, { parent: ud.head, glow: P.glow, glowI: P.glowI }),
         ];
     },
 
@@ -398,9 +398,9 @@ Object.assign(CREATURE_PLANS, {
         ];
         add(0.05, 0.08, 0.05, P.accent, -0.05, 0.2, -0.02);                       // tucked feet
         add(0.05, 0.08, 0.05, P.accent, 0.05, 0.2, -0.02);
-        ud.eyes = [
-            add(0.035, 0.045, 0.03, P.eye, -0.045, 0.01, 0.075, { parent: ud.head }),
-            add(0.035, 0.045, 0.03, P.eye, 0.045, 0.01, 0.075, { parent: ud.head }),
+        ud.eyes = [ // item 310: nocturnal eye-shine (no-op unless the palette sets glow)
+            add(0.035, 0.045, 0.03, P.eye, -0.045, 0.01, 0.075, { parent: ud.head, glow: P.glow, glowI: P.glowI }),
+            add(0.035, 0.045, 0.03, P.eye, 0.045, 0.01, 0.075, { parent: ud.head, glow: P.glow, glowI: P.glowI }),
         ];
     },
 
@@ -430,13 +430,13 @@ Object.assign(CREATURE_PLANS, {
             add(0.04, 0.13, 0.04, P.accent2, -0.06, 0.13, -0.06, { parent: ud.head, rx: -0.6 }),
             add(0.04, 0.13, 0.04, P.accent2, 0.06, 0.13, -0.06, { parent: ud.head, rx: -0.6 }),
         ];
-        ud.wings = [ // broad two-part wings
-            add(0.5, 0.05, 0.3, P.body, -0.4, 0.62, -0.02),
-            add(0.5, 0.05, 0.3, P.body, 0.4, 0.62, -0.02),
+        ud.wings = [ // broad two-part wings — item 311: thin translucent membrane
+            add(0.5, 0.05, 0.3, P.body, -0.4, 0.62, -0.02, { trans: true, opacity: 0.85 }),
+            add(0.5, 0.05, 0.3, P.body, 0.4, 0.62, -0.02, { trans: true, opacity: 0.85 }),
         ];
         ud.wingTips = [
-            add(0.3, 0.04, 0.22, P.belly, -0.76, 0.62, -0.06, { glow: P.glow, glowI: (P.glowI || 1) * 0.6 }),
-            add(0.3, 0.04, 0.22, P.belly, 0.76, 0.62, -0.06, { glow: P.glow, glowI: (P.glowI || 1) * 0.6 }),
+            add(0.3, 0.04, 0.22, P.belly, -0.76, 0.62, -0.06, { trans: true, opacity: 0.85, glow: P.glow, glowI: (P.glowI || 1) * 0.6 }),
+            add(0.3, 0.04, 0.22, P.belly, 0.76, 0.62, -0.06, { trans: true, opacity: 0.85, glow: P.glow, glowI: (P.glowI || 1) * 0.6 }),
         ];
         ud.tail = [ // long trailing plumes
             add(0.08, 0.05, 0.4, P.belly, 0, 0.48, -0.4, { rx: 0.25, glow: P.glow, glowI: (P.glowI || 1) * 0.7 }),

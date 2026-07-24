@@ -14,10 +14,11 @@ import { state, reuse } from '../state.js';
 import { getTerrainHeight, getGroundY, isWaterAt, riverTangent, riverSpan, riverPointAt, caveConfine, caveAt, caveCeilingAt } from '../heightfield.js';
 import { collidesObstacle } from '../player.js';
 import { spawnParticleBurst, spawnTrailMote, spawnWaterRipple } from '../particles.js';
-import { animateCreature } from './animate.js';
+import { animateCreature, resetPose } from './animate.js';
 import { creatureLod } from '../lod.js';
 import { updateDodge, coverHeading, keepDistance, alarmFrom, updateLegendaryPresence } from './smart.js';
 import { updateCaveCreature } from './cave-behavior.js';
+import { zoneAt } from '../zones/zones.js';
 
 // Is the player camera looking (roughly) at this creature?
 function playerLookingAt(c) {
@@ -269,6 +270,29 @@ export function updateCreatures(dt, elapsed) {
             }
         }
 
+        // ---- items 313/318: "noticed you" alert tell ----
+        // Smoothed 0..1 fed into animateCreature for a quick ear-perk/eye-widen
+        // BEFORE a creature actually bolts — from the player closing inside
+        // CAPTURE_RANGE (item 313), or from a skittish flinch when another
+        // creature wanders very close (item 318's ambient ecosystem touch).
+        // The peer scan is throttled (every 4th frame) and only walks the
+        // REST of the array per creature, so it's a bounded, cheap O(n^2/4)
+        // math loop — no new geometry/draw calls involved.
+        let alertTarget = (playerPos && dp < CONFIG.CAPTURE_RANGE && !fleeing) ? 1 : 0;
+        if (!alertTarget && (state.creatureFrame + ci) % 4 === 0) {
+            for (let oj = ci + 1; oj < state.creatures.length; oj++) {
+                const o = state.creatures[oj];
+                if (!o.alive || o.capturing) continue;
+                const odx = p.x - o.pos.x, odz = p.z - o.pos.z;
+                if (odx * odx + odz * odz < 1.7) {
+                    alertTarget = 1;
+                    o.alertK = Math.max(o.alertK || 0, 0.6);
+                    break;
+                }
+            }
+        }
+        c.alertK = (c.alertK || 0) + (alertTarget - (c.alertK || 0)) * Math.min(1, dt * 5);
+
         // ---- intelligence layer (smart.js): dodge > cover > range ----
         if (def.int) {
             if (updateDodge(c, elapsed)) {
@@ -400,6 +424,19 @@ export function updateCreatures(dt, elapsed) {
             p.y = getGroundY(p.x, p.z) + hopY; // rendered voxel-surface height
         }
 
+        // items 309/325: a dabbling duck ("dip cycle" — see animate.js's duck
+        // case) is briefly head/tail-under the surface; a ripple + a few pale
+        // bubbles right as it tips over is the "splash-down" / water-response
+        // read for an amphibious surface swimmer, without any new geometry.
+        if (def.plan === 'duck' && def.aquatic) {
+            const dabbling = ((elapsed * 0.14 + c.phase) % 1) < 0.12;
+            if (dabbling && !c._dabbling) {
+                spawnWaterRipple(p.x, p.z);
+                spawnParticleBurst(p.x, CONFIG.POND_WATER_LEVEL + 0.05, p.z, 0xdff2ff, 4);
+            }
+            c._dabbling = dabbling;
+        }
+
         // ---- facing ----
         c.group.rotation.y = -headingMove + Math.PI / 2 + (c.meta.face || 0);
 
@@ -407,8 +444,27 @@ export function updateCreatures(dt, elapsed) {
         //      beyond the anim ring, dropped past the simplify ring; the same
         //      call drops the creature's shadow past the tier's shadow ring ----
         const lc = playerPos ? creatureLod(c, p.distanceToSquared(playerPos)) : 0;
-        if (lc === 0 || (lc === 1 && (state.creatureFrame + ci) % 3 === 0)) {
-            animateCreature(c, elapsed, mul, hopK);
+        if (lc === 2) {
+            // item 321: settle into a clean rest pose ONCE on the transition
+            // into the simplified tier, instead of freezing on whatever
+            // mid-stride/mid-lean frame it happened to cross the ring on.
+            if (!c._lodSimplified) { c._lodSimplified = true; resetPose(c); }
+        } else {
+            c._lodSimplified = false;
+            if (lc === 0 || (lc === 1 && (state.creatureFrame + ci) % 3 === 0)) {
+                animateCreature(c, elapsed, mul, hopK, c.alertK || 0);
+            }
+        }
+
+        // item 316: a quick "shake it off" body wiggle right as a breakout
+        // begins — distinct from the sustained BREAKOUT_PANIC_TIME bolt above.
+        // Additive (not overwritten by whatever the per-plan animation just
+        // set group.rotation.z to), so it reads on every archetype.
+        if (c.breakoutUntil > elapsed) {
+            const sinceBreak = CONFIG.BREAKOUT_PANIC_TIME - (c.breakoutUntil - elapsed);
+            if (sinceBreak >= 0 && sinceBreak < 0.35) {
+                c.group.rotation.z += Math.sin(sinceBreak * 40) * 0.22 * (1 - sinceBreak / 0.35);
+            }
         }
 
         // rare/legendary sparkle trail (bloom catches these motes)
@@ -419,6 +475,39 @@ export function updateCreatures(dt, elapsed) {
                 p.z + (Math.random() - 0.5) * 0.5,
                 def.particle, 1
             );
+        } else if (def.tier === 'uncommon' || def.tier === 'rare') {
+            // item 303: a faint ambient tier tell for creatures that AREN'T
+            // hand-flagged `sparkle` — so uncommon/rare read at a glance
+            // before the targeting UI confirms it. Legendaries already get
+            // the richer aura in updateLegendaryPresence below.
+            const rate = CONFIG.CREATURE_TIER_TRAIL_RATE[def.tier] || 0;
+            if (rate && Math.random() < dt * rate) {
+                spawnTrailMote(p.x, p.y + c.centerY, p.z, def.particle);
+            }
+        }
+        // items 312/320: ground-based creatures kick up a puff colored to
+        // their OWN species (the bestiary's `particle` field is already
+        // theme/zone-matched per species) when moving fast — dashing/fleeing
+        // reads as kicking up the local ground, not just running in place.
+        if (!def.hover && !def.aquatic && state.qualityLevel !== 'low' && mul > 1.3 && Math.random() < dt * 5) {
+            spawnTrailMote(
+                p.x - Math.cos(headingMove) * 0.25,
+                p.y + 0.05,
+                p.z - Math.sin(headingMove) * 0.25,
+                def.particle
+            );
+        }
+        // item 308: Frostwing puffs visible breath-vapor while over a cold zone
+        if (def.id === 'frostwing' && Math.random() < dt * 2.2) {
+            const z = zoneAt(p.x, p.z);
+            if (z && (z.id === 'ice' || z.id === 'snow' || z.id === 'alpine')) {
+                spawnTrailMote(
+                    p.x + Math.cos(headingMove) * 0.3,
+                    p.y + c.centerY + 0.1,
+                    p.z + Math.sin(headingMove) * 0.3,
+                    0xeaf7ff
+                );
+            }
         }
         // phoenix ember wake trailing behind the flight line
         if (def.ember && state.qualityLevel !== 'low' && Math.random() < dt * 16) {

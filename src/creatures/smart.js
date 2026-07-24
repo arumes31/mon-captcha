@@ -145,6 +145,16 @@ export function alarmFrom(caller, nowS) {
     }
 }
 
+// Item 315: a per-legendary signature twist on the shared aura so each
+// legendary reads distinctly, not just "generic tier glow". Phoenix already
+// owns a dedicated ember wake (behavior.js's `def.ember` trail), so it isn't
+// listed here — anything not listed keeps the plain single-tone aura.
+const LEGENDARY_AURA = {
+    crystalGolem: { rate: 20, altColor: true },  // dual-tone faceted sparkle
+    goldenDuck: { rate: 22, altColor: false },   // brighter/faster shimmer
+    gloomwyrm: { rate: 9, altColor: false },     // slow, deep cathedral drift
+};
+
 /* ------------------------------------------------------------
    Legendary presence: orbiting aura sparkles (bloom feeds on the
    additive motes), a subtle larger-than-life pulse, and a soft
@@ -152,14 +162,18 @@ export function alarmFrom(caller, nowS) {
    ------------------------------------------------------------ */
 export function updateLegendaryPresence(c, dt, elapsed, playerPos) {
     // aura: motes orbiting the body (skipped on the low tier)
-    if (state.qualityLevel !== 'low' && Math.random() < dt * 14) {
+    const sig = LEGENDARY_AURA[c.def.id];
+    const rate = sig ? sig.rate : 14;
+    if (state.qualityLevel !== 'low' && Math.random() < dt * rate) {
         const a = elapsed * 2.6 + c.phase * 7 + Math.random() * 0.7;
         const rr = c.hitRadius + 0.5;
+        const useAlt = sig && sig.altColor && Math.floor(elapsed * 3) % 2 === 0;
+        const color = useAlt ? (c.def.palette.accent2 || c.def.palette.glow || c.def.particle) : c.def.particle;
         spawnTrailMote(
             c.pos.x + Math.cos(a) * rr,
             c.pos.y + c.centerY + Math.sin(elapsed * 3.1 + c.phase) * 0.35 + 0.1,
             c.pos.z + Math.sin(a) * rr,
-            c.def.particle
+            color
         );
     }
 

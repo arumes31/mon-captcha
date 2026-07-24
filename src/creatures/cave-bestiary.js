@@ -30,7 +30,8 @@ export const CAVE_CREATURE_TYPES = [
     // 65 — CEILING BAT COLONY (bat/flooded themes)
     { id: 'colonyBat', name: 'Roost Bat', plan: 'bat', tier: 'uncommon', scale: 0.58, speed: 1.9, hover: 2.0,
       cave: true, caveBehavior: 'roost',
-      palette: { body: 0x2e2833, accent: 0x453c52, belly: 0x241f2c, eye: 0xd8452e }, particle: 0x7a6a94 },
+      // item 310: nocturnal eye-shine — glow wired into the bat plan's eyes
+      palette: { body: 0x2e2833, accent: 0x453c52, belly: 0x241f2c, eye: 0xd8452e, glow: 0xff5a3a, glowI: 1.0 }, particle: 0x7a6a94 },
 
     // 66 — CAVE LEGENDARY: the Gloomwyrm (cathedral only, 1/world)
     { id: 'gloomwyrm', name: 'Gloomwyrm', plan: 'dragon', tier: 'legendary', scale: 2.35, speed: 1.4, hover: 2.4,

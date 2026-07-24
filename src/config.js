@@ -197,4 +197,9 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ---- Creature visual-design pass (src/creatures/*, world-graphics-
+    // improvements.md section 18, items 303-323) — appended block, does not
+    // touch any existing key above.
+    CREATURE_TIER_TRAIL_RATE: { uncommon: 0.5, rare: 1.8 }, // item 303: ambient per-second tier-tell trail chance (legendary has its own richer aura; common gets none)
 };
