@@ -197,4 +197,16 @@ export const CONFIG = {
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
+
+    // ---- Flora — trees & vegetation (world-graphics backlog items 177-196) ----
+    // Mostly color/shape-only tuning (near-zero instance cost); the few that add
+    // geometry (root flares, frost/moss dressing, the burnt landmark) are
+    // thinned on the 'low' quality tier by flora-trees.js's own tierScale().
+    TREE_HUE_JITTER: 0.05,          // per-tree canopy hue/lightness bias (item 195)
+    TREE_CANOPY_AO: 0.16,           // interior-dark / edge-light canopy gradient (item 180)
+    TREE_LOBE_WOBBLE: 0.22,         // per-tree canopy silhouette irregularity (item 181)
+    TREE_ROOT_FLARE_CHANCE: 0.85,   // trunk-base flare frequency (item 193)
+    TREE_BARK_FLECK_CHANCE: 0.16,   // non-birch bark groove flecks, skipped on 'low' (item 188)
+    CACTUS_FULL_BLOOM_CHANCE: 0.09, // rare full flower-crown vs. single blossom (item 191)
+    BURNT_TREE_LANDMARKS: 1,        // seeded scorched/lightning-struck landmark count (item 196)
 };
