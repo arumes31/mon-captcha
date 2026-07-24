@@ -40,16 +40,30 @@
                 <kbd>WASD</kbd> / <kbd>Arrows</kbd> to move &middot; <kbd>Space</kbd> to jump &middot;
                 <kbd>Ctrl</kbd> to crouch &middot; <kbd>Mouse</kbd> to look &middot; <kbd>Click</kbd> to throw capture balls
             </div>
+            <!-- Weather condition badge (item 408): text + icon, never icon-only -->
+            <div id="weather-badge" class="hud-chip"><span id="weather-icon" aria-hidden="true">&#9728;&#65039;</span> <span id="weather-label">Clear</span></div>
         </div>
 
         <!-- Center crosshair (CSS-drawn via pseudo-elements) -->
         <div id="crosshair"></div>
 
+        <!-- Zone compass (item 403): needle tracks camera heading, ring tints to
+             the current zone's palette. Decorative wayfinding only — aria-hidden. -->
+        <div id="compass" aria-hidden="true"><div id="compass-needle"></div></div>
+
+        <!-- Off-screen legendary-creature direction hint (item 416). Positioned
+             around the screen edge by ui.js; decorative wayfinding only. -->
+        <div id="legendary-radar" aria-hidden="true">&#9650;</div>
+
+        <!-- Capture-ball cooldown radial preview (item 414), filled via ui.js
+             tracking state.viewmodel's throw/cooldown phase. -->
+        <div id="cooldown-wipe" aria-hidden="true"></div>
+
         <!-- Touch controls (mobile): virtual joystick + drag-to-look zone +
              jump/crouch/throw/pause buttons. Hidden until touch-controls.js
              detects a coarse (touch) pointer; faded in only while playing. -->
         <div id="touch-controls">
-            <div id="touch-look-zone" aria-hidden="true"></div>
+            <div id="touch-look-zone" aria-hidden="true"><div id="touch-look-indicator"></div></div>
             <div id="touch-move-zone" aria-hidden="true">
                 <div id="touch-move-knob"></div>
             </div>
@@ -87,6 +101,7 @@
                 <h1>Click to play</h1>
                 <p>Score 6 capture points to prove you're human &mdash; rarer creatures are worth 2.</p>
                 <p class="hint">Click anywhere to lock your pointer and begin.</p>
+                <button id="a11y-open-btn" type="button" aria-haspopup="dialog" aria-controls="a11y-panel"><span aria-hidden="true">&#9881;&#65039;</span> Accessibility</button>
             </div>
         </div>
 
@@ -104,6 +119,41 @@
         <!-- Error fallback: shown if WebGL/init fails -->
         <div id="error-message">
             <p>This CAPTCHA needs WebGL to run. Please enable hardware acceleration or try a different browser.</p>
+        </div>
+
+        <!-- Accessibility & comfort settings (items 415/417/418/421/423/428).
+             Reached via the "Accessibility" button on the title/pause card so
+             it never fights Pointer Lock — the cursor is already free
+             whenever that card is showing. -->
+        <div id="a11y-panel" class="a11y-panel" role="dialog" aria-modal="true" aria-labelledby="a11y-title" tabindex="-1">
+            <div class="a11y-card">
+                <h2 id="a11y-title">Accessibility &amp; Comfort</h2>
+                <div class="a11y-row">
+                    <label for="pref-high-contrast">High-contrast HUD</label>
+                    <input type="checkbox" id="pref-high-contrast">
+                </div>
+                <div class="a11y-row">
+                    <label for="pref-reduced-motion">Reduce HUD motion</label>
+                    <input type="checkbox" id="pref-reduced-motion">
+                </div>
+                <div class="a11y-row">
+                    <label for="pref-large-crosshair">Large, high-contrast crosshair</label>
+                    <input type="checkbox" id="pref-large-crosshair">
+                </div>
+                <div class="a11y-row">
+                    <label for="pref-colorblind">Colorblind-safe creature colors</label>
+                    <input type="checkbox" id="pref-colorblind">
+                </div>
+                <div class="a11y-row a11y-row-slider">
+                    <label for="pref-brightness">Scene brightness</label>
+                    <input type="range" id="pref-brightness" min="0.6" max="1.5" step="0.05" value="1">
+                </div>
+                <div class="a11y-row a11y-row-slider">
+                    <label for="pref-hud-scale">HUD size</label>
+                    <input type="range" id="pref-hud-scale" min="0.85" max="1.4" step="0.05" value="1">
+                </div>
+                <button id="a11y-close-btn" type="button">Done</button>
+            </div>
         </div>
     </div>
 

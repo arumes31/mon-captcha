@@ -51,6 +51,7 @@ export function initTouchControls() {
     els = {
         root: document.getElementById('touch-controls'),
         lookZone: document.getElementById('touch-look-zone'),
+        lookIndicator: document.getElementById('touch-look-indicator'),
         moveZone: document.getElementById('touch-move-zone'),
         moveKnob: document.getElementById('touch-move-knob'),
         jumpBtn: document.getElementById('touch-jump-btn'),
@@ -59,6 +60,10 @@ export function initTouchControls() {
         pauseBtn: document.getElementById('touch-pause-btn'),
     };
     if (!els.root) return; // markup missing (e.g. an embedding page trimmed it) — nothing to wire up
+
+    // item 436: tie the discoverable drag-radius ring (style.css) to the
+    // actual tunable so a future CONFIG change stays visually honest.
+    if (els.moveZone) els.moveZone.style.setProperty('--joystick-radius', CONFIG.TOUCH_JOYSTICK_RADIUS + 'px');
 
     if (els.moveZone) {
         els.moveZone.addEventListener('touchstart', onMoveStart, { passive: false });
@@ -133,8 +138,12 @@ export function disposeTouchControls() {
         if (els.throwBtn) els.throwBtn.removeEventListener('touchstart', onThrow, { passive: false });
         if (els.pauseBtn) els.pauseBtn.removeEventListener('touchstart', onPauseTap, { passive: false });
         if (els.root) els.root.classList.remove('visible');
-        if (els.moveKnob) els.moveKnob.style.transform = '';
+        if (els.moveKnob) {
+            els.moveKnob.style.transform = '';
+            els.moveKnob.classList.remove('pressed');
+        }
         if (els.crouchBtn) els.crouchBtn.classList.remove('active');
+        if (els.lookIndicator) els.lookIndicator.classList.remove('active');
     }
     if (state.controls) {
         state.controls.removeEventListener('lock', onGameLock);
@@ -178,6 +187,7 @@ function onMoveStart(e) {
     const rect = els.moveZone.getBoundingClientRect();
     state.touch.moveOriginX = rect.left + rect.width / 2;
     state.touch.moveOriginY = rect.top + rect.height / 2;
+    if (els.moveKnob) els.moveKnob.classList.add('pressed'); // item 413: glow-on-press
     updateMoveVector(touch.clientX, touch.clientY);
 }
 
@@ -225,7 +235,10 @@ function updateMoveVector(clientX, clientY) {
 function releaseMoveTouch() {
     state.touch.moveId = null;
     state.player.analogMove = null;
-    if (els && els.moveKnob) els.moveKnob.style.transform = '';
+    if (els && els.moveKnob) {
+        els.moveKnob.style.transform = '';
+        els.moveKnob.classList.remove('pressed');
+    }
 }
 
 /* ------------------------------------------------------------
@@ -239,6 +252,7 @@ function onLookStart(e) {
     state.touch.lookId = touch.identifier;
     state.touch.lookLastX = touch.clientX;
     state.touch.lookLastY = touch.clientY;
+    positionLookIndicator(touch.clientX, touch.clientY, true);
 }
 
 function onLookMove(e) {
@@ -250,6 +264,7 @@ function onLookMove(e) {
     t.lookDeltaY += touch.clientY - t.lookLastY;
     t.lookLastX = touch.clientX;
     t.lookLastY = touch.clientY;
+    positionLookIndicator(touch.clientX, touch.clientY, true);
 }
 
 function onLookEnd(e) {
@@ -262,6 +277,16 @@ function releaseLookTouch() {
     state.touch.lookId = null;
     state.touch.lookDeltaX = 0;
     state.touch.lookDeltaY = 0;
+    if (els && els.lookIndicator) els.lookIndicator.classList.remove('active');
+}
+
+// item 433: a small glow dot that tracks the look-drag finger, so new
+// mobile players can see the drag gesture is registering.
+function positionLookIndicator(clientX, clientY, active) {
+    if (!els || !els.lookIndicator) return;
+    els.lookIndicator.style.left = clientX + 'px';
+    els.lookIndicator.style.top = clientY + 'px';
+    els.lookIndicator.classList.toggle('active', active);
 }
 
 /* ------------------------------------------------------------

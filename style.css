@@ -84,6 +84,28 @@ button:focus-visible {
     width: 100%;
     height: 100%;
     z-index: 1;
+    /* item 421: brightness slider — set on <html> by the accessibility
+       panel so it cascades here without touching engine.js/renderer code */
+    filter: brightness(var(--scene-brightness, 1));
+    transition: filter 0.15s ease;
+}
+
+/* item 410: brief golden wash for a legendary capture, toggled by ui.js's
+   pulseLegendaryHud(). Pure CSS animation — no extra DOM node needed. */
+#captcha-container.legendary-pulse::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    background: radial-gradient(ellipse at center, rgba(255, 215, 94, 0.32), rgba(255, 215, 94, 0) 68%);
+    animation: legendary-pulse-fade 0.8s ease forwards;
+}
+
+@keyframes legendary-pulse-fade {
+    0% { opacity: 0; }
+    25% { opacity: 1; }
+    100% { opacity: 0; }
 }
 
 #captcha-container canvas {
@@ -123,6 +145,9 @@ button:focus-visible {
     gap: 10px;
     max-width: min(72vw, 460px);
     pointer-events: none;
+    /* item 428: adjustable HUD scale, set by the accessibility panel */
+    transform: scale(var(--hud-scale, 1));
+    transform-origin: top left;
 }
 
 .hud-corner > * {
@@ -184,8 +209,16 @@ button:focus-visible {
     max-width: 100%;
 }
 
+/* item 409: recedes (not removed — still peekable) after the player's
+   first successful capture, set by ui.js's updateCounterUI() */
+#instructions.instructions-faded {
+    opacity: 0.16;
+    transition: opacity 1s ease;
+}
+
 /* ---------- Capture counter badge ---------- */
 #counter {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -224,6 +257,23 @@ button:focus-visible {
         0 2px 0 rgba(20, 10, 6, 0.45);
 }
 
+/* Progress-ring border (item 404) — a conic-gradient ring drawn as an
+   annulus via mask-composite so it hugs the chip's own rounded corners.
+   ui.js sets --progress (0-100) each time updateCounterUI() runs. */
+#counter::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 17px;
+    padding: 3px;
+    background: conic-gradient(from -90deg, var(--leaf) calc(var(--progress, 0) * 1%), rgba(255, 255, 255, 0.14) 0);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    transition: background 0.4s ease;
+}
+
 /* ---------- Reticle (CSS-only) ---------- */
 #crosshair {
     position: absolute;
@@ -231,7 +281,9 @@ button:focus-visible {
     left: 50%;
     width: 34px;
     height: 34px;
-    transform: translate(-50%, -50%);
+    /* hud-scale (item 428) multiplies the base size; pref-large-crosshair
+       (item 423) overrides width/height directly, below */
+    transform: translate(-50%, -50%) scale(var(--hud-scale, 1));
     pointer-events: none;
     border: 2px solid rgba(255, 243, 221, 0.92);
     border-radius: 50%;
@@ -243,6 +295,7 @@ button:focus-visible {
     transition:
         transform 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.4),
         border-color 0.18s ease,
+        box-shadow 0.22s ease,
         opacity 0.2s ease;
 }
 
@@ -280,11 +333,19 @@ button:focus-visible {
     }
 }
 
-/* Creature in range: warm up, tighten, spin faster */
+/* Creature in range: warm up, tighten, spin faster. This IS the hook for
+   item 405 — targeting.js toggles this class once per frame based on its
+   own hover+range+alive+capturing check, so "valid target in CAPTURE_RANGE"
+   already drives crosshair color/scale/glow with zero coupling. What it
+   does NOT do yet: shade continuously between RING_RISKY/RING_SURE with the
+   live capture-% the way the 3D ring does — targeting.js would need to also
+   write something like `ui.crosshair.style.setProperty('--chance', chance)`
+   (or a data-chance attribute) alongside classList.add('hovering') for that
+   finer gradient; out of this pass's file scope (targeting.js untouched). */
 #crosshair.hovering {
     opacity: 1;
     border-color: var(--amber-bright);
-    transform: translate(-50%, -50%) scale(1.2);
+    transform: translate(-50%, -50%) scale(calc(1.2 * var(--hud-scale, 1)));
     box-shadow:
         0 0 0 1.5px rgba(36, 22, 16, 0.6),
         inset 0 0 0 1.5px rgba(36, 22, 16, 0.6),
@@ -299,6 +360,43 @@ button:focus-visible {
 #crosshair.hovering::after {
     border-color: rgba(255, 184, 77, 0.9);
     animation-duration: 1.8s;
+}
+
+/* item 423: large, high-contrast crosshair mode */
+html.pref-large-crosshair #crosshair {
+    width: 50px;
+    height: 50px;
+    border-width: 3px;
+    border-color: #fff;
+    opacity: 1;
+}
+
+html.pref-large-crosshair #crosshair::before {
+    width: 7px;
+    height: 7px;
+}
+
+html.pref-large-crosshair #crosshair.hovering {
+    border-color: #fff2a8;
+    box-shadow:
+        0 0 0 2px rgba(36, 22, 16, 0.75),
+        inset 0 0 0 2px rgba(36, 22, 16, 0.75),
+        0 0 26px rgba(255, 226, 130, 0.85);
+}
+
+/* item 417: colorblind-safe accent — swaps the hover tint from amber to a
+   blue/cyan already used by RING_SURE, keeping the amber<->cyan axis (never
+   a red/green pair) but adding a second cue (thicker ring) for redundancy */
+html.pref-colorblind #crosshair.hovering {
+    border-color: #5ff0d0;
+    box-shadow:
+        0 0 0 1.5px rgba(36, 22, 16, 0.6),
+        inset 0 0 0 1.5px rgba(36, 22, 16, 0.6),
+        0 0 20px rgba(95, 240, 208, 0.6);
+}
+
+html.pref-colorblind #crosshair.hovering::before {
+    background: #5ff0d0;
 }
 
 /* ---------- Parchment card (shared: title, pause, success) ---------- */
@@ -389,7 +487,10 @@ button:focus-visible {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    /* item 431: full-screen overlays clear notches/rounded corners in
+       landscape too, not just the edge-anchored HUD chips */
+    padding: max(env(safe-area-inset-top), 20px) max(env(safe-area-inset-right), 20px)
+             max(env(safe-area-inset-bottom), 20px) max(env(safe-area-inset-left), 20px);
     background:
         radial-gradient(120% 100% at 50% 18%, rgba(58, 32, 16, 0.1), rgba(28, 14, 8, 0.58) 88%),
         rgba(38, 20, 10, 0.32);
@@ -546,6 +647,34 @@ button:focus-visible {
     }
 }
 
+/* Secondary "Accessibility" entry point (items 415/417/418/421/423/428) —
+   lives on the shared title/pause card, so the pointer is always free when
+   it's reachable (never fights Pointer Lock). Deliberately lower-key than
+   the amber .hint pill: an outline chip, not a second call to action. */
+#a11y-open-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 14px;
+    padding: 7px 16px;
+    border-radius: 999px;
+    background: rgba(53, 36, 26, 0.08);
+    border: 2px solid rgba(53, 36, 26, 0.35);
+    color: var(--ink-soft);
+    font-family: var(--font-body);
+    font-size: clamp(11.5px, 1.8vw, 13px);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+#a11y-open-btn:hover {
+    background: rgba(53, 36, 26, 0.14);
+    border-color: var(--ink-soft);
+    color: var(--ink);
+}
+
 /* ---------- Pause overlay ---------- */
 #pause-overlay {
     position: absolute;
@@ -556,7 +685,8 @@ button:focus-visible {
     display: none;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: max(env(safe-area-inset-top), 20px) max(env(safe-area-inset-right), 20px)
+             max(env(safe-area-inset-bottom), 20px) max(env(safe-area-inset-left), 20px);
     background:
         radial-gradient(120% 100% at 50% 18%, rgba(58, 32, 16, 0.1), rgba(28, 14, 8, 0.58) 88%),
         rgba(38, 20, 10, 0.32);
@@ -582,7 +712,8 @@ button:focus-visible {
     height: 100%;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: max(env(safe-area-inset-top), 20px) max(env(safe-area-inset-right), 20px)
+             max(env(safe-area-inset-bottom), 20px) max(env(safe-area-inset-left), 20px);
     background:
         radial-gradient(120% 100% at 50% 20%, rgba(70, 40, 16, 0.12), rgba(24, 11, 6, 0.6) 90%),
         rgba(30, 15, 8, 0.4);
@@ -765,7 +896,7 @@ button:focus-visible {
     position: absolute;
     bottom: max(env(safe-area-inset-bottom), 22px);
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) scale(var(--hud-scale, 1));
     padding: 10px 20px;
     white-space: nowrap;
     border-radius: 999px;
@@ -800,14 +931,43 @@ body.touch-mode #touch-controls {
     pointer-events: auto;
 }
 
+/* item 433: subtle glow dot that follows the look-drag finger, positioned
+   by touch-controls.js; fades out on release so new mobile players can see
+   the input model tracking their thumb */
+#touch-look-indicator {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 54px;
+    height: 54px;
+    margin: -27px 0 0 -27px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 214, 158, 0.32), rgba(255, 214, 158, 0) 68%);
+    opacity: 0;
+    transform: scale(0.6);
+    pointer-events: none;
+    transition: opacity 0.35s ease, transform 0.35s ease;
+    will-change: transform, opacity;
+}
+
+#touch-look-indicator.active {
+    opacity: 1;
+    transform: scale(1);
+    transition: opacity 0.08s ease, transform 0.08s ease;
+}
+
 /* Move joystick + action buttons: hidden until play actually starts,
-   faded in alongside #play-hint on lock */
+   faded in alongside #play-hint on lock. Orientation changes (item 434)
+   just reflow these percentages/env() insets instantly since nothing here
+   is JS-computed pixel geometry — the short transition below only smooths
+   the (rare) case of the safe-area insets themselves changing mid-session. */
 #touch-move-zone,
 .touch-btn {
     position: absolute;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.1s ease, background 0.15s ease, border-color 0.15s ease;
+    transition: opacity 0.25s ease, transform 0.1s ease, background 0.15s ease,
+        border-color 0.15s ease, box-shadow 0.15s ease, left 0.2s ease, right 0.2s ease, bottom 0.2s ease;
     touch-action: none;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
@@ -820,6 +980,7 @@ body.touch-mode #touch-controls {
 }
 
 #touch-move-zone {
+    position: absolute;
     left: max(env(safe-area-inset-left), 24px);
     bottom: max(env(safe-area-inset-bottom), 24px);
     width: 110px;
@@ -828,6 +989,29 @@ body.touch-mode #touch-controls {
     background: radial-gradient(circle at 40% 35%, rgba(255, 214, 158, 0.16), rgba(20, 10, 6, 0.4) 72%);
     border: 2px solid rgba(255, 214, 158, 0.3);
     box-shadow: var(--chip-shadow);
+}
+
+/* item 436: a dashed ring at the joystick's actual live drag radius
+   (CONFIG.TOUCH_JOYSTICK_RADIUS, written to --joystick-radius by
+   touch-controls.js) so the knob's travel distance is discoverable at a
+   glance instead of implied by the outer zone's unrelated 55px radius */
+#touch-move-zone::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(var(--joystick-radius, 36px) * 2);
+    height: calc(var(--joystick-radius, 36px) * 2);
+    margin: calc(var(--joystick-radius, 36px) * -1) 0 0 calc(var(--joystick-radius, 36px) * -1);
+    border-radius: 50%;
+    border: 1.5px dashed rgba(255, 214, 158, 0.45);
+    pointer-events: none;
+    animation: joystick-radius-breathe 2.6s ease-in-out infinite;
+}
+
+@keyframes joystick-radius-breathe {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.8; }
 }
 
 #touch-move-knob {
@@ -842,6 +1026,18 @@ body.touch-mode #touch-controls {
     border: 2px solid var(--ink-deep);
     box-shadow: 0 3px 0 var(--ink-deep), 0 8px 16px -6px rgba(20, 10, 6, 0.6);
     will-change: transform;
+    transition: box-shadow 0.12s ease;
+}
+
+/* item 413: glow-on-press feedback (touch-controls.js toggles this class
+   in onMoveStart/onMoveEnd — added to the KNOB itself, not just the CSS
+   :active pseudo-class, since touches land on the wider zone) */
+#touch-move-knob.pressed {
+    box-shadow:
+        0 3px 0 var(--ink-deep),
+        0 8px 16px -6px rgba(20, 10, 6, 0.6),
+        0 0 0 6px rgba(255, 196, 110, 0.32),
+        0 0 22px rgba(255, 196, 110, 0.6);
 }
 
 .touch-btn {
@@ -865,6 +1061,7 @@ body.touch-mode #touch-controls {
 
 .touch-btn:active {
     transform: scale(0.9);
+    box-shadow: var(--chip-shadow), 0 0 16px rgba(255, 196, 110, 0.5);
 }
 
 #touch-throw-btn {
@@ -1057,6 +1254,279 @@ body.touch-mode #touch-controls {
     font-weight: 800;
     line-height: 42px;
     text-align: center;
+}
+
+/* ---------- Weather condition badge (item 408) ---------- */
+#weather-badge {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+#weather-icon {
+    font-size: 1.05em;
+}
+
+/* ---------- Zone compass (item 403) ---------- */
+#compass {
+    position: absolute;
+    top: max(env(safe-area-inset-top), 14px);
+    right: max(env(safe-area-inset-right), 14px);
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    /* fallback for browsers without color-mix(), overridden below where supported */
+    background: radial-gradient(circle at 35% 30%, rgba(93, 156, 79, 0.35), rgba(40, 24, 16, 0.92) 78%);
+    background:
+        radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--zone-color, var(--leaf)) 55%, transparent), rgba(40, 24, 16, 0.92) 78%);
+    border: 2px solid rgba(20, 10, 6, 0.9);
+    box-shadow: var(--chip-shadow);
+    pointer-events: none;
+    transition: background 0.9s ease;
+    z-index: 2;
+}
+
+/* Touch mode also shows #touch-pause-btn at this same top-right corner
+   (38px) — drop the compass below it so they never overlap. */
+body.touch-mode #compass {
+    top: calc(max(env(safe-area-inset-top), 14px) + 50px);
+}
+
+#compass-needle {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 3px;
+    height: 20px;
+    margin: -20px 0 0 -1.5px;
+    border-radius: 2px 2px 0 0;
+    background: linear-gradient(180deg, #fff3dd 0%, rgba(255, 243, 221, 0.1) 100%);
+    transform-origin: 50% 100%;
+    pointer-events: none;
+    transition: transform 0.15s linear;
+}
+
+/* ---------- Off-screen legendary-creature indicator (item 416) ---------- */
+#legendary-radar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 30px;
+    height: 30px;
+    line-height: 30px;
+    text-align: center;
+    font-size: 18px;
+    color: #ffd75e;
+    text-shadow: 0 0 10px rgba(255, 215, 94, 0.85), 0 2px 2px rgba(20, 10, 6, 0.6);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 15;
+    transition: opacity 0.3s ease;
+}
+
+/* ---------- Capture-ball cooldown radial wipe (item 414) ---------- */
+#cooldown-wipe {
+    position: absolute;
+    right: 12%;
+    bottom: 24%;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: conic-gradient(from -90deg, var(--amber-bright) calc(var(--wipe, 0) * 360deg), rgba(20, 10, 6, 0.55) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 3;
+}
+
+/* ---------- Accessibility & comfort panel (items 415/417/418/421/423/428) ---------- */
+.a11y-panel {
+    display: none;
+    position: absolute;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    padding: max(env(safe-area-inset-top), 20px) max(env(safe-area-inset-right), 20px)
+             max(env(safe-area-inset-bottom), 20px) max(env(safe-area-inset-left), 20px);
+    background:
+        radial-gradient(120% 100% at 50% 20%, rgba(58, 32, 16, 0.14), rgba(24, 11, 6, 0.62) 90%),
+        rgba(30, 15, 8, 0.42);
+    -webkit-backdrop-filter: blur(7px) saturate(1.1);
+    backdrop-filter: blur(7px) saturate(1.1);
+    pointer-events: none;
+    z-index: 50;
+    outline: none;
+}
+
+.a11y-panel.visible {
+    display: flex;
+    pointer-events: auto;
+}
+
+.a11y-card {
+    position: relative;
+    width: min(90vw, 420px);
+    max-height: 86vh;
+    overflow-y: auto;
+    padding: clamp(22px, 5vw, 34px);
+    background: var(--paper-tex);
+    border: 2px solid var(--ink-deep);
+    border-radius: 22px;
+    box-shadow: var(--card-shadow);
+    color: var(--ink);
+    animation: card-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.25) backwards;
+}
+
+.a11y-card h2 {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: clamp(20px, 4vw, 26px);
+    color: var(--ink-deep);
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.a11y-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px dashed rgba(93, 60, 35, 0.22);
+}
+
+.a11y-row:last-of-type {
+    border-bottom: none;
+}
+
+.a11y-row label {
+    font-size: clamp(13px, 2vw, 14.5px);
+    font-weight: 700;
+    color: var(--ink);
+    flex: 1 1 auto;
+}
+
+/* Custom checkbox toggle — walnut track, amber-pill knob */
+.a11y-row input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 0 0 auto;
+    width: 42px;
+    height: 24px;
+    border-radius: 999px;
+    background: rgba(53, 36, 26, 0.25);
+    border: 2px solid var(--ink-deep);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.a11y-row input[type="checkbox"]::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, #fff4de, #ecd9b4);
+    transition: transform 0.15s ease;
+}
+
+.a11y-row input[type="checkbox"]:checked {
+    background: var(--leaf);
+}
+
+.a11y-row input[type="checkbox"]:checked::before {
+    transform: translateX(18px);
+}
+
+.a11y-row-slider {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.a11y-row-slider label {
+    flex: none;
+}
+
+.a11y-row-slider input[type="range"] {
+    width: 100%;
+    accent-color: var(--amber-deep);
+}
+
+#a11y-close-btn {
+    display: block;
+    width: 100%;
+    margin-top: 20px;
+    padding: 12px;
+    font-family: var(--font-body);
+    font-size: clamp(14px, 2.2vw, 16px);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: var(--ink-deep);
+    background: linear-gradient(180deg, #ffc169, var(--amber) 55%, #e8922e);
+    border: 2px solid var(--ink-deep);
+    border-radius: 14px;
+    box-shadow: 0 4px 0 var(--ink-deep);
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+#a11y-close-btn:hover {
+    transform: translateY(-1px);
+}
+
+#a11y-close-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 var(--ink-deep);
+}
+
+/* ---------- High-contrast HUD mode (items 415/407) ---------- */
+html.pref-high-contrast .hud-chip,
+html.pref-high-contrast #counter,
+html.pref-high-contrast #weather-badge {
+    background: linear-gradient(180deg, #050505, #1a1008);
+    border-color: #fff;
+    border-width: 2px;
+    color: #fff;
+    text-shadow: none;
+}
+
+html.pref-high-contrast .hud-chip kbd {
+    background: #fff;
+    border-color: #000;
+    color: #000;
+}
+
+html.pref-high-contrast #crosshair {
+    border-color: #fff;
+}
+
+/* ---------- Manual reduced-motion toggle (item 418) ----------
+   Mirrors the OS-level @media (prefers-reduced-motion: reduce) block
+   below, but as an opt-in class so players can ask for it even when their
+   OS-level setting is left alone. HUD-scoped: screen-shake/view-bob/bloom
+   are 3D effects in engine.js/viewmodel.js/quality.js (out of this file's
+   scope) — they'd need to read a shared flag (e.g. state.prefsReducedMotion)
+   to fully honor this toggle too. */
+html.pref-reduced-motion *,
+html.pref-reduced-motion *::before,
+html.pref-reduced-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+}
+
+html.pref-reduced-motion .confetti {
+    display: none;
+}
+
+html.pref-reduced-motion .spinner::before {
+    transform: translateY(12px);
 }
 
 /* ---------- Small screens ---------- */
