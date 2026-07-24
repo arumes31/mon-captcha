@@ -27,7 +27,7 @@ function inCaveFootprint(x, z) {
     if (cf && cf.lat < cf.hw + 1.1) return true;
     return inLavaFootprint(x, z);
 }
-import { zoneAt } from '../zones/zones.js';
+import { zoneAt, zoneBlendAt } from '../zones/zones.js';
 import { addSpecies, speciesRadius } from './flora-trees.js';
 
 // Pick a species from a zone's weighted [species, weight] table
@@ -86,7 +86,13 @@ export function buildFlora(half, V_STEP) {
         if (nearSpawn(x, z, 3)) continue;
         if (inCaveFootprint(x, z)) continue;
         const zone = zoneAt(x, z);
-        if (r() > zone.flora.treeDensity / 1.4) continue; // zone density gate
+        // item 192: cross-fade the tree-density falloff across zone borders in
+        // sync with the same soft blend weight terrain uses for palettes, so
+        // tree cover thins out gradually near a border instead of snapping the
+        // instant the hard (if dithered) zone partition flips.
+        const bl = zoneBlendAt(x, z);
+        const density = bl.a.flora.treeDensity + (bl.b.flora.treeDensity - bl.a.flora.treeDensity) * bl.t;
+        if (r() > density / 1.4) continue; // zone density gate
         // avoid overlap with existing trees
         let ok = true;
         for (const t of treeList) {
@@ -97,6 +103,25 @@ export function buildFlora(half, V_STEP) {
         treeList.push({ x, z, species, r: speciesRadius(species) });
         addSpecies(details, x, z, V_STEP, species, r);
         placed++;
+    }
+
+    // item 196: rare lightning-struck/burnt landmark snag. A live "struck
+    // THIS storm" reaction needs a per-frame post-thunderstorm hook that
+    // lives outside this build-once module (atmosphere.js/game.js own the
+    // weather event stream) — this is the seeded, always-discoverable
+    // substitute: a permanent scorched landmark for environmental flavor.
+    for (let bIdx = 0; bIdx < CONFIG.BURNT_TREE_LANDMARKS; bIdx++) {
+        const bx = (r() * 2 - 1) * (half - 6);
+        const bz = (r() * 2 - 1) * (half - 6);
+        const spot = findDryLand(bx, bz, 2.0);
+        if (inLavaFootprint(spot.x, spot.z, 2.5) || inCaveFootprint(spot.x, spot.z) || nearSpawn(spot.x, spot.z, 4)) continue;
+        let clear = true;
+        for (const t of treeList) {
+            if ((t.x - spot.x) ** 2 + (t.z - spot.z) ** 2 < 12) { clear = false; break; }
+        }
+        if (!clear) continue;
+        treeList.push({ x: spot.x, z: spot.z, species: 'burnt', r: speciesRadius('burnt') });
+        addSpecies(details, spot.x, spot.z, V_STEP, 'burnt', r);
     }
     state.treeList = treeList;
 
