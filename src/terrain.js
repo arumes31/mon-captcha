@@ -602,7 +602,37 @@ function buildWaterExtras(half) {
     w.wadeAcc = 0;
     _waterExtras = w;
     if (state.water) {
-        state.water.onBeforeRender = (renderer, scene, camera) => updateWaterExtras(camera);
+        // three's Water OWNS onBeforeRender: that hook is where it renders the
+        // mirror pass and writes back `textureMatrix` and `eye`. Assigning over
+        // it (as this used to) silently killed all three — textureMatrix stayed
+        // identity so the shader sampled the reflection at raw world XZ, miles
+        // outside [0,1] and clamped to a single edge texel, and `eye` stayed at
+        // the origin so the Fresnel term pinned near 1 and mixed `waterColor`
+        // out entirely. The surface rendered as one flat opaque slab. CHAIN
+        // onto the addon's hook instead; extras run first so the reflection
+        // pass sees this frame's glints/foam/debris.
+        // ...but only on the tiers that can afford it. That hook re-renders the
+        // WHOLE scene into the mirror target, so honouring it doubles draw calls
+        // for every frame the lake is in frustum (measured 466 -> 928) — exactly
+        // the cost this project refuses to spend on a device with no real GPU.
+        // Below 'high' we skip the mirror render and just publish `eye`, which
+        // is the uniform that actually fixed the look: with it correct the
+        // Fresnel term resolves properly, so `waterColor`/`scatter` and the sun
+        // specular come back and the surface reads as water instead of a slab.
+        // What's lost without the mirror pass is only the reflected image
+        // itself (reflectionSample stays black, so grazing angles read as dark
+        // deep water) — a fair trade at the tier that already drops the whole
+        // post chain.
+        const waterOwnHook = state.water.onBeforeRender;
+        state.water.onBeforeRender = function (renderer, scene, camera, ...rest) {
+            updateWaterExtras(camera);
+            const q = state.qualityLevel;
+            if (q === 'high' || q === 'ultra') {
+                waterOwnHook.call(this, renderer, scene, camera, ...rest);
+            } else {
+                this.material.uniforms['eye'].value.setFromMatrixPosition(camera.matrixWorld);
+            }
+        };
     }
 }
 
@@ -799,11 +829,15 @@ export function buildTerrain() {
     // engine.js's createRenderer() — the same signal quality.js uses to pick
     // the STARTING tier — so it is a reasonable proxy for "start on a weak
     // device" here. Segment count varies the Water plane's tessellation cost;
-    // `size` varies the normal-map's tiling (the ripple SCALE, not just
-    // distortionScale, which quality.js already tunes live per tier).
+    // the reflection target varies its per-frame FILL cost — that mirror pass
+    // re-renders the whole scene, so it is the priciest thing on the water and
+    // the one worth stepping down. 512 is already finer than the chunky voxels
+    // it reflects; a weak start halves it again. (There is no `size` option to
+    // set here: r160's Water constructor never reads options.size, so the
+    // ripple-tiling uniform stays at the shader default of 1.0 either way.)
     const weakStart = !!state.softwareRenderer;
     const waterSegs = weakStart ? 14 : 32;
-    const waterRippleSize = weakStart ? 1.6 : 1.0;
+    const waterReflectRes = weakStart ? 256 : 512;
 
     // 1. Water — three/addons Water covering the WHOLE arena at the shared
     //    waterline. The dry-land floor in heightfield.js guarantees terrain
@@ -811,14 +845,13 @@ export function buildTerrain() {
     //    one reflective plane serves the entire water network.
     const waterGeo = new THREE.PlaneGeometry(CONFIG.ARENA_SIZE + 2, CONFIG.ARENA_SIZE + 2, waterSegs, waterSegs);
     const water = new Water(waterGeo, {
-        textureWidth: 1024,
-        textureHeight: 1024,
+        textureWidth: waterReflectRes,
+        textureHeight: waterReflectRes,
         waterNormals: makeWaterNormals(),
         sunDirection: SUN_DIRECTION.clone(),
         sunColor: 0xffd6a0,
         waterColor: 0x1f7d8c,
         distortionScale: 1.0,
-        size: waterRippleSize,
         fog: state.scene.fog !== undefined,
         alpha: 0.84,
     });

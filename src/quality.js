@@ -38,6 +38,8 @@ const PIXEL_RATIO_CAP_BY_TIER = { ultra: CONFIG.PIXEL_RATIO_ULTRA, high: CONFIG.
 const WATER_DISTORTION_BY_TIER = { ultra: 1.0, high: 1.0, medium: 0.8, low: 0.4 };
 const BLOOM_STRENGTH_BY_TIER = { ultra: 0.30, high: 0.22, medium: 0.20, low: 0.22 };
 const SHARPEN_BY_TIER = { ultra: 0.22, high: 0.14, medium: 0, low: 0 };
+// Highlight cutoff for UnrealBloomPass, in pre-tone-mapped luminance.
+const BLOOM_THRESHOLD = 1.6;
 
 const VALID_TIERS = ['low', 'medium', 'high', 'ultra'];
 const SESSION_KEY = 'mc_quality_tier'; // item 387
@@ -218,8 +220,12 @@ function initPostProcessing() {
     composer.addPass(outline);
     state.outlinePass = outline;
 
-    // Subtle bloom — mainly catches the sun disc, water glints and fireflies
-    const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.5, 1.0);
+    // Subtle bloom — mainly catches the sun disc, water glints and fireflies.
+    // Threshold sits above the sky dome's scaled luminance (see
+    // SKY_RADIANCE_SCALE in engine.js): RenderPass feeds this pass a
+    // pre-tone-mapped half-float buffer, so a threshold at/below the sky's
+    // radiance blooms the entire dome instead of the highlights in it.
+    const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.22, 0.5, BLOOM_THRESHOLD);
     bloom.enabled = true;
     composer.addPass(bloom);
     state.bloomPass = bloom;

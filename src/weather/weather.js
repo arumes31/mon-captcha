@@ -435,6 +435,10 @@ function applyEnvironment(P, flash, DN, rainAmt, duck = 0, grade = 0) {
     if (state.sun) state.sun.intensity = W.base.sun * DN.sunMul * P.sunMul * duckMul + flash * 4.5;
     if (state.hemi) state.hemi.intensity = W.base.hemi * DN.hemiMul * P.hemiMul * fx.ambientMul * duckMul + flash * 6.5;
     if (state.skyFill) state.skyFill.intensity = W.base.skyFill * DN.skyFillMul * P.skyFillMul * fx.ambientMul * duckMul + flash * 3.0;
+    // The cool under-fill (engine.js) rides skyFill rather than carrying its own
+    // per-state baseline, so overcast/night/cave/duck all reach it for free — a
+    // cave whose ambient is multiplied to near-zero must not keep a lit ceiling.
+    if (state.bounceFill && state.skyFill) state.bounceFill.intensity = state.skyFill.intensity * CONFIG.SKY_BOUNCE_FILL;
     // item 16: zone palette bias on exposure — a small additive nudge (Ember
     // Flats reads a touch brighter/hotter, Frozen Reaches a touch cooler/dimmer)
     // rather than one flat global exposure value
@@ -594,6 +598,7 @@ export function disposeWeather() {
             if (state.sun) state.sun.intensity = W.base.sun;
             if (state.hemi) state.hemi.intensity = W.base.hemi;
             if (state.skyFill) state.skyFill.intensity = W.base.skyFill;
+            if (state.bounceFill) state.bounceFill.intensity = W.base.skyFill * CONFIG.SKY_BOUNCE_FILL;
             if (state.renderer) state.renderer.toneMappingExposure = W.base.exposure;
         } catch (e) {}
     }

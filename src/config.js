@@ -235,6 +235,15 @@ export const CONFIG = {
     // camera position.
     SHADOW_FOLLOW_RADIUS: 45,
 
+    // Cool sky-bounce under-fill (engine.js), as a FRACTION of skyFill's live
+    // intensity so it inherits every weather/day-night/cave/duck multiplier the
+    // rest of the ambient rig gets. Sun and skyFill both come from above, so
+    // downward-facing voxel faces are lit by the hemisphere ground term alone
+    // and tone-map to near-black; this lifts exactly those faces and nothing
+    // else. Keep it low — past ~0.6 it starts erasing the canopy's interior
+    // depth instead of just its black holes.
+    SKY_BOUNCE_FILL: 0.54,
+
     // Quality
     SHADOW_MAP_HIGH: 2048,
     SHADOW_MAP_MED: 1024,

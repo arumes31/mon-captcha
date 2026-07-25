@@ -60,6 +60,32 @@ export const SUN_DIRECTION = new THREE.Vector3();
 const SUN_ELEVATION = 24; // degrees — late-afternoon sun: warm but high enough to light tops
 const SUN_AZIMUTH = 108;  // degrees — front-right of the spawn view, just out of frame
 
+/* ------------------------------------------------------------
+   three's Sky shader emits raw sky radiance in the 2–6 range —
+   values authored for a renderer running a much lower exposure
+   than this scene's 1.08. Two things go wrong at that magnitude:
+   ACES saturates the whole dome to ~white (so turbidity/rayleigh
+   stop being visible at all, and the cloud layer disappears into
+   it), and — because RenderPass writes a pre-tone-mapped
+   half-float target — every sky pixel clears UnrealBloomPass's
+   threshold, blooming the entire sky and washing the frame.
+   Scaling the shader's output back into ACES' responsive range
+   fixes both without touching toneMappingExposure, which is tuned
+   for the terrain. Keep BLOOM_THRESHOLD (quality.js) above the
+   scaled sky's luminance or the whiteout returns.
+   ------------------------------------------------------------ */
+export const SKY_RADIANCE_SCALE = 0.42;
+
+function applySkyRadianceScale(sky) {
+    const mat = sky.material;
+    mat.uniforms.uSkyRadianceScale = { value: SKY_RADIANCE_SCALE };
+    const OUT = 'gl_FragColor = vec4( retColor, 1.0 );';
+    if (mat.fragmentShader.indexOf(OUT) === -1) return; // upstream shader changed — leave it alone
+    mat.fragmentShader = ('uniform float uSkyRadianceScale;\n' + mat.fragmentShader)
+        .replace(OUT, 'gl_FragColor = vec4( retColor * uSkyRadianceScale, 1.0 );');
+    mat.needsUpdate = true;
+}
+
 export function buildEngine(container) {
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0xf2dcb3, 0.0036); // light warm-cream haze, thin in the middle distance
@@ -91,6 +117,8 @@ export function buildEngine(container) {
     scene.add(sky);
     state.sky = sky;
 
+    applySkyRadianceScale(sky);
+
     const skyU = sky.material.uniforms;
     skyU['turbidity'].value = 2.4;        // clear warm air — soft glow without whiting out the sky
     skyU['rayleigh'].value = 2.0;         // saturated blue overhead falling to amber horizon
@@ -112,6 +140,20 @@ export function buildEngine(container) {
     skyFill.position.set(-40, 30, -40);
     scene.add(skyFill);
     state.skyFill = skyFill;
+
+    // Cool sky bounce from BELOW. Sun and skyFill both shine downward, so a
+    // downward-facing voxel face receives only the hemisphere light's ground
+    // term — warm, dim, and (against dark foliage) squarely in the ACES toe,
+    // which is why canopy undersides crushed to black. Aiming a weak cool fill
+    // up lifts only those faces: an upward normal's dot product with it is
+    // zero, so sunlit tops and the overall contrast are untouched. Cast no
+    // shadow — it is a bounce approximation, not a light source.
+    // weather.js keeps its intensity pinned to skyFill's (CONFIG.SKY_BOUNCE_FILL).
+    const bounceFill = new THREE.DirectionalLight(0x9dbde0, 0.65 * CONFIG.SKY_BOUNCE_FILL);
+    bounceFill.position.set(0, -60, 0);
+    bounceFill.castShadow = false;
+    scene.add(bounceFill);
+    state.bounceFill = bounceFill;
 
     const sun = new THREE.DirectionalLight(0xffd6a0, 3.6); // warm golden sun, strong but not scorching
     sun.position.copy(SUN_DIRECTION).multiplyScalar(60);
