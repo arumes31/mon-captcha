@@ -10,7 +10,9 @@ export const state = {
     camera: null,
     renderer: null,
     controls: null,
-    clock: { last: 0 },
+    // last: timestamp of the last ACCEPTED frame (drives dt).
+    // next: the frame gate's target timeline — see animate().
+    clock: { last: 0, next: 0 },
     rafId: null,
     disposed: false,
     softwareRenderer: false, // set once by engine.js's createRenderer() via gpu-detect.js

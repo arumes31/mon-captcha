@@ -284,8 +284,38 @@ export const CONFIG = {
     FPS_SAMPLE_FRAMES: 60,
     FPS_DOWN_THRESHOLD: 35,
     FPS_DOWN_FRAMES: 60,
-    FPS_UP_THRESHOLD: 52,
+    /* Promotion threshold, as a frame rate. Deliberately close to MAX_FPS.
+
+       The tier ladder moves the pixel ratio (1 / 1.5 / 2), so fill cost between
+       neighbouring tiers differs by ~1.78x. With the old 52 threshold, a device
+       managing ~30 FPS on 'high' scored ~53 on 'medium' — over the line — so it
+       promoted, dropped straight back under FPS_DOWN_THRESHOLD, demoted, and
+       repeated. Replaying the stepper against that device model: 259 tier
+       changes in ten minutes, one every ~3.3 s, each resizing the shadow map
+       and reallocating all twenty composer render targets. That is a recurring
+       multi-hundred-millisecond freeze produced entirely by the thing meant to
+       prevent them.
+
+       Asking for ~95% of the cap instead means "promote only from a tier that
+       is comfortably holding the frame rate", not "from one that is barely
+       clearing the midpoint". */
+    FPS_UP_THRESHOLD: 57,
     FPS_UP_FRAMES: 120,
+    /* Two dampers on top of the threshold, because a frame CAP hides headroom:
+       a device pinned at MAX_FPS on 'medium' reads exactly the same as one with
+       room to spare, so FPS alone cannot answer "could this device hold the
+       next tier up?" and the stepper has to learn from being wrong.
+
+       FPS_UP_BACKOFF multiplies the sustained-good-frames requirement after
+       every demotion (capped at FPS_UP_BACKOFF_MAX x FPS_UP_FRAMES), so repeat
+       offenders are re-tried ever more rarely. TIER_DEMOTION_LOCK stops the
+       retrying entirely: after this many demotions out of a tier, the auto
+       stepper never promotes back into it for the rest of the session, which
+       is what makes the loop provably converge rather than merely slow down.
+       A manual ?quality= override still ignores all of this. */
+    FPS_UP_BACKOFF: 4,
+    FPS_UP_BACKOFF_MAX: 16,
+    TIER_DEMOTION_LOCK: 2,
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
@@ -405,6 +435,22 @@ export const CONFIG = {
     // is already distorted by the normal map and blended at alpha 0.84.
     WATER_MIRROR_FRAME_SKIP: 2,
 
+    /* How many cave point lights the scene ever contains.
+
+       three.js compiles the VISIBLE light count into every material's shader
+       (numPointLights is a #define), so a light appearing or disappearing
+       relinks the entire scene. Cave lights used to be toggled per distance
+       band, which measured 5 -> 8 -> 12 visible lights walking to a cave and
+       back, at +15 and +14 program links — a stall at every entrance.
+
+       Cave lights now run through a pool of exactly this many always-visible
+       PointLights (caves.js buildCaveLightPool), so the count never changes and
+       nothing ever relinks. It doubles as the per-pixel lighting cost ceiling,
+       which the old per-band scheme lacked entirely. Fixed for the session and
+       deliberately NOT derived from the quality tier: resizing it on a tier
+       change would reintroduce exactly the relink it exists to prevent. */
+    CAVE_LIGHT_POOL: 6,
+
     SHADOW_MAP_ULTRA: 4096,
     PIXEL_RATIO_ULTRA: 3,
     // item 379: emergency resolution-scale lever below PIXEL_RATIO_LOW for
@@ -412,6 +458,33 @@ export const CONFIG = {
     // down to). Floored so it degrades gracefully instead of unboundedly.
     PIXEL_RATIO_FLOOR: 0.6,
     PIXEL_RATIO_STEP: 0.85,
+
+    /* Hard ceiling on the renderer's backing-store pixel count.
+
+       The per-tier PIXEL_RATIO_* caps above bound the pixel RATIO but not the
+       resulting pixel COUNT, and the post-processing chain's GPU cost is
+       driven by the count. Measured against the live composer, the chain
+       allocates ~57 bytes per canvas pixel: the ping-pong pair plus
+       OutlinePass's depth and mask buffers are all full-resolution, all RGBA
+       (HalfFloat except the mask), and every one of the twenty targets --
+       including all eleven UnrealBloomPass mips -- also carries a depth
+       buffer.
+
+       So on any HiDPI display, where devicePixelRatio is 2 and the 'high'
+       tier's cap of 2 does not bite at all, the render targets alone want:
+
+           1920x1080 @dpr2 -> 3840x2160  ->  ~0.47 GB
+           2560x1440 @dpr2 -> 5120x2880  ->  ~0.86 GB
+           3840x2160 @dpr2 -> 7680x4320  ->  ~1.9  GB
+
+       which exhausts the GPU memory a browser will hand a single tab and
+       takes the context (and usually the tab) with it. Capping the COUNT
+       bounds that at ~0.21 GB regardless of window size or dpr; the frame is
+       then rendered at up to 2560x1440 and scaled to the display, which is
+       ordinary render-scaling and what every native game does.
+
+       0 disables the cap and restores pure dpr-driven sizing. */
+    MAX_BACKBUFFER_PIXELS: 2560 * 1440,
 
     // item 355/371: hysteresis band (fraction of the base radius) around
     // each CREATURE_LOD threshold so anim/shadow/simple state doesn't

@@ -118,7 +118,96 @@ export function buildCaves() {
     // rec.lights layer, so the initial cull pass below sizes them correctly.
     buildCaveAtmos();
     buildCaveLight();
+    buildCaveLightPool();
     updateCaves(0, 0); // set initial bands so caves away from spawn start culled
+}
+
+/* ------------------------------------------------------------
+   Cave point lights run through a FIXED-SIZE POOL.
+
+   three.js bakes the NUMBER OF VISIBLE LIGHTS of each type into the shader
+   program cache key (numPointLights becomes a #define). Toggling any light's
+   .visible therefore invalidates EVERY material in the scene and relinks it —
+   a synchronous, driver-side stall.
+
+   The old scheme toggled cave lights per distance band, which did exactly that
+   at every band crossing. Measured by walking to a cave and back (seed 4242):
+   visible point lights went 5 -> 8 -> 12, costing +15 then +14 program links.
+   That is a freeze at every cave entrance, which is precisely where it was
+   reported.
+
+   A pool of constant size never changes the cache key, so nothing ever relinks.
+   It also CAPS the per-pixel lighting cost, which the old scheme did not — it
+   peaked at 12 simultaneous point lights. Each frame the nearest sources win
+   the slots; unused slots idle at intensity 0 (still visible, so the count
+   holds). Pool size is fixed for the session and deliberately NOT tier-derived:
+   a tier change that resized it would relink everything, which is the bug.
+   ------------------------------------------------------------ */
+const _caveLightSources = [];   // every cave light, as plain data (not in scene)
+const _caveLightPool = [];      // the only cave PointLights the scene ever sees
+
+function buildCaveLightPool() {
+    _caveLightSources.length = 0;
+    _caveLightPool.length = 0;
+    for (const rec of state.caveRender) {
+        for (const L of rec.lights) {
+            const l = L.light;
+            // Pull the real light out of the scene: an object that is never in
+            // the scene contributes nothing to the light count, permanently.
+            if (state.scene) state.scene.remove(l);
+            _caveLightSources.push({
+                x: l.position.x, y: l.position.y, z: l.position.z,
+                color: l.color.getHex(), distance: l.distance, decay: l.decay,
+                base: L.base, flick: L.flick, rec,
+            });
+        }
+        rec.lights.length = 0; // the culler no longer drives these directly
+    }
+    const n = Math.min(CONFIG.CAVE_LIGHT_POOL, _caveLightSources.length);
+    for (let i = 0; i < n; i++) {
+        const p = new THREE.PointLight(0xffffff, 0, 10, 2);
+        p.castShadow = false;
+        p.visible = true;             // permanently — this is the whole point
+        if (state.scene) state.scene.add(p);
+        _caveLightPool.push(p);
+    }
+    state.caveLightPool = _caveLightPool; // ?probe visibility
+}
+
+/* Assign the nearest live sources to the pool slots. Called once per frame from
+   updateCaves, after the band pass has decided which caves are active. */
+function driveCaveLightPool(elapsed) {
+    if (!_caveLightPool.length) return 0;
+    const cam = state.camera && state.camera.position;
+    let lit = 0;
+    for (let i = 0; i < _caveLightSources.length; i++) {
+        const s = _caveLightSources[i];
+        const band = s.rec.band;
+        // same LOD the per-cave toggle used: dark when far, dimmer in the mid band
+        s._w = band === 'far' ? -1
+            : (cam ? -((cam.x - s.x) ** 2 + (cam.y - s.y) ** 2 + (cam.z - s.z) ** 2) : 0);
+        s._dim = band === 'mid' ? 0.6 : 1;
+    }
+    // partial selection: K is small, so a linear scan per slot beats a sort
+    const taken = new Set();
+    for (let k = 0; k < _caveLightPool.length; k++) {
+        let best = -1, bestW = -Infinity;
+        for (let i = 0; i < _caveLightSources.length; i++) {
+            if (taken.has(i) || _caveLightSources[i]._w < 0) continue;
+            if (_caveLightSources[i]._w > bestW) { bestW = _caveLightSources[i]._w; best = i; }
+        }
+        const p = _caveLightPool[k];
+        if (best < 0) { p.intensity = 0; continue; } // idle slot, still visible
+        taken.add(best);
+        const s = _caveLightSources[best];
+        p.position.set(s.x, s.y, s.z);
+        p.color.setHex(s.color);
+        p.distance = s.distance;
+        p.decay = s.decay;
+        p.intensity = s.base * s._dim * (0.86 + 0.14 * Math.sin(elapsed * s.flick + k));
+        lit++;
+    }
+    return lit;
 }
 
 // Per-cave cull/LOD record: a proximity centre + radius, the current band, and
@@ -560,14 +649,9 @@ export function updateCaves(dt, elapsed) {
         if (rec.pool) rec.pool.visible = visible;
         if (rec.aux) for (let a = 0; a < rec.aux.length; a++) rec.aux[a].visible = visible; // water sheets
 
-        for (let i = 0; i < rec.lights.length; i++) {
-            const L = rec.lights[i];
-            totalLights++;
-            if (!visible) { L.light.visible = false; continue; }
-            L.light.visible = true; litLights++;
-            const dim = b === 'mid' ? 0.6 : 1; // LOD: dimmer in the mid band
-            L.light.intensity = L.base * dim * (0.86 + 0.14 * Math.sin(elapsed * L.flick + i));
-        }
+        // Cave lights are NOT toggled here any more — see buildCaveLightPool().
+        // Flipping .visible per band relinked every shader in the scene, which
+        // is what made cave entrances stall. The pool is driven once, below.
         if (visible && rec.desc && rec.desc.update) {
             try { rec.desc.update({ cave: rec.cave, ci: rec.ci, band: b, dt, elapsed, near: b === 'near', mid: b === 'mid' }); } catch (e) {}
         }
@@ -611,7 +695,11 @@ export function updateCaves(dt, elapsed) {
         }
     }
 
-    state.caveCullStats = { active, near: nNear, mid: nMid, far: nFar, litLights, totalLights, activeGlow, totalGlow };
+    // One pool pass for the whole world, after every band is settled.
+    litLights = driveCaveLightPool(elapsed);
+    totalLights = _caveLightSources.length;
+
+    state.caveCullStats = { active, near: nNear, mid: nMid, far: nFar, litLights, totalLights, activeGlow, totalGlow, poolSize: _caveLightPool.length };
 }
 
 /* ------------------------------------------------------------
@@ -642,5 +730,12 @@ export function disposeCaves() {
         }
         state.caveRender = null;
     }
+    // The pooled lights are the only cave lights actually in the scene
+    // (buildCaveLightPool removed the per-cave originals at build time), so
+    // they are what teardown has to drop.
+    for (const p of _caveLightPool) { if (state.scene) state.scene.remove(p); }
+    _caveLightPool.length = 0;
+    _caveLightSources.length = 0;
+    state.caveLightPool = null;
     state.caveCullStats = null;
 }

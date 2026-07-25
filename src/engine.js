@@ -41,8 +41,18 @@ function createRenderer(container) {
     } catch (e) {
         throw new Error('WebGL not available');
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(container.clientWidth, container.clientHeight);
+    // Bootstrap ratio only — initQuality()'s applyPixelRatio() reconciles this
+    // to the tier a moment later. It still honours CONFIG.MAX_BACKBUFFER_PIXELS
+    // so the very first allocation cannot be the oversized one: on a HiDPI 4K
+    // window min(dpr,2) alone asks for a 7680x4320 backing store, and the
+    // context can be lost on that allocation before quality.js ever runs.
+    const bootW = container.clientWidth, bootH = container.clientHeight;
+    let bootPr = Math.min(window.devicePixelRatio || 1, 2);
+    if (CONFIG.MAX_BACKBUFFER_PIXELS > 0 && bootW > 0 && bootH > 0) {
+        bootPr = Math.min(bootPr, Math.sqrt(CONFIG.MAX_BACKBUFFER_PIXELS / (bootW * bootH)));
+    }
+    renderer.setPixelRatio(bootPr);
+    renderer.setSize(bootW, bootH);
     renderer.shadowMap.enabled = true;
     // Confirmed software rendering: skip PCF's multi-tap shadow filtering
     // (decided once here, before any material compiles against it — no
