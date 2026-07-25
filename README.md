@@ -2,7 +2,7 @@
 
 **A first-person 3D voxel game that proves you're human by making you play, not squint at distorted text.**
 
-Catch six capture-points' worth of wandering creatures in a procedurally generated golden-hour valley — swim, wade, spelunk, and throw capture balls Palworld-style — and the CAPTCHA hands your page a signed token.
+Catch six capture-points' worth of wandering creatures in a procedurally generated golden-hour valley — swim, wade, spelunk, and throw capture balls Palworld-style — and the CAPTCHA hands your page a token your backend can verify.
 
 [![CI](https://github.com/arumes31/mon-captcha/actions/workflows/ci.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/arumes31/mon-captcha/actions/workflows/codeql.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/codeql.yml)
@@ -92,7 +92,86 @@ Touch mode is detected automatically — nothing to configure.
 
 ## Integrating it in your site
 
-Drop `index.html`'s `<div id="captcha-container">`/`<div id="hud">` markup and `main.js` into a page (or embed the whole thing in an `<iframe>`). The game exposes a small public API on `window.__captcha`:
+Two ways in. Use the **widget** to put the CAPTCHA on someone else's site; use the **direct API** if you're hosting the game yourself and only need the callback.
+
+### The widget (for third-party sites)
+
+Customer adds two lines:
+
+```html
+<form method="POST" action="/signup">
+  <input name="email" type="email">
+
+  <div class="monster-captcha"
+       data-sitekey="mc_customer-a-com_qTLtf17Ph3D"
+       data-verify="https://captcha.yourdomain.com"></div>
+
+  <button type="submit">Sign up</button>
+</form>
+
+<script src="https://captcha.yourdomain.com/embed/monster-captcha.js" defer></script>
+```
+
+That renders a checkbox. Clicking it opens the game in a modal frame; on success the token
+lands in a hidden `monster-captcha-response` input inside the surrounding form, and the
+customer's **backend** verifies it:
+
+```bash
+curl -X POST https://captcha.yourdomain.com/siteverify \
+  -H 'content-type: application/json' \
+  -d '{"secret":"mcs_…","response":"<token from the form>"}'
+# => {"success":true,"hostname":"customer-a.com","points":6,"challenge_ts":"…"}
+```
+
+Tokens are single-use, expire in two minutes, and are bound to the domain the widget ran on.
+
+#### Where do site keys come from?
+
+You mint them — there's no signup portal and no central registry, because **you** run the
+verification service:
+
+```bash
+node server/keygen.mjs --origin https://customer-a.com \
+                       --origin https://www.customer-a.com \
+                       --file server/keys.json
+```
+
+```
+  sitekey   mc_customer-a-com_qTLtf17Ph3D
+      public — goes in the customer's HTML:  data-sitekey="…"
+
+  secret    mcs_A8uckZnc4guGpDsBpNB0Hezak…
+      PRIVATE — goes to the customer's BACKEND only, for POST /siteverify.
+
+  origins   https://customer-a.com, https://www.customer-a.com
+      tokens for this key are only issued to these embedding sites
+```
+
+Then run the service:
+
+```bash
+MC_KEYS_FILE=server/keys.json \
+MC_CHALLENGE_ORIGINS=https://captcha.yourdomain.com \
+node server/verify.mjs
+```
+
+**Site keys are domain-restricted.** Before opening the game, the widget calls `/challenge`
+from the customer's own page — the browser stamps that request's `Origin`, and page script
+can't change it. The server checks it against the key's registered origins and returns a
+signed blob naming the domain; the token is minted from *that*, never from anything the
+client asserts. Copy a site key onto an unregistered domain and it is refused
+(`domain-not-allowed`) before the game even loads.
+
+The limit, stated plainly: `Origin` is a browser guarantee, not a network one — a non-browser
+client can send whatever it likes. This stops cross-site and copied-key abuse from real
+browsers, which is exactly the guarantee reCAPTCHA/hCaptcha domain restriction gives.
+
+📖 **Full reference: [docs/INTEGRATION.md](docs/INTEGRATION.md)** — all widget attributes, the
+JS API, error codes, the postMessage protocol, and the threat model.
+
+### Direct API (self-hosted, no widget)
+
+Drop `index.html`'s `<div id="captcha-container">`/`<div id="hud">` markup and `main.js` into a page. The game exposes a small public API on `window.__captcha`:
 
 ```js
 window.__captcha = {
@@ -100,21 +179,25 @@ window.__captcha = {
   destroy,                 // tear everything down (call before removing the container)
   getCreaturesCaught,      // current capture-point total
   getIsCaptchaSolved,      // boolean
-  getToken,                // signed token string once solved, else null
+  getToken,                // in-page token once solved — see the warning below
   getFps,                  // rolling average fps
   getQualityLevel,         // 'high' | 'medium' | 'low'
+  isEmbedded,              // running inside a host site's widget frame
 };
+
+window.onCaptchaSolved = (token) => { /* … */ };
 ```
 
-When the player reaches six capture points, the game calls a global callback with the token:
+> [!WARNING]
+> **`getToken()` is not verifiable.** It returns `SHA-256(nonce:hash:points:required)` where
+> the nonce is random and never transmitted, and `CONFIG.PRIVATE_SALT` ships to every browser
+> inside `src/config.js` — so it is not a secret, and isn't even used in that hash. A server
+> receiving it holds nothing to check it against and cannot tell it from any other 32 bytes
+> of hex. Treat it as a UI signal only. For anything that matters, use the widget path above,
+> which replaces it with a server-signed token.
 
-```js
-window.onCaptchaSolved = (token) => {
-  // send `token` to your backend to verify and continue the form/flow
-};
-```
-
-See `test.html` for a working reference integration (a live diagnostic panel polling the API).
+See `test.html` for a working reference integration (a live diagnostic panel polling the API),
+and `embed/demo.html` for the widget.
 
 ## Project structure
 
@@ -142,7 +225,8 @@ src/
 ├── particles.js / particle-pool.js
 ├── atmosphere.js          clouds, fireflies, falling leaves, distant birds
 ├── lava.js                magma vent + lava river
-├── security.js            token signing
+├── security.js            in-page token (NOT verifiable — see Integrating)
+├── embed.js               cross-origin widget bridge (postMessage protocol)
 │
 ├── zones/                 12 biome zone defs + palette/blend lookup
 ├── mountain/               landmark mountain + waterfall/basin/vent dressing
@@ -153,6 +237,15 @@ src/
 │                            atmosphere, gameplay, audio, theme registry…)
 └── creatures/               bestiary, body plans, spawn, behavior/AI, animation
 
+embed/
+├── monster-captcha.js     the widget third-party sites include (no deps)
+└── demo.html              runnable integration demo
+
+server/
+├── verify.mjs             token issuing + /siteverify (node built-ins only)
+└── keygen.mjs             mint domain-restricted site key / secret pairs
+
+docs/INTEGRATION.md        full widget reference + threat model
 tests/                     Playwright QA harness (dev-only, see tests/README.md)
 .github/workflows/         CI, CodeQL, dependency review, GHCR image build
 Dockerfile, docker-compose*.yml

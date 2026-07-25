@@ -10,6 +10,10 @@ COPY test.html /usr/share/nginx/html/test.html
 COPY main.js /usr/share/nginx/html/main.js
 COPY style.css /usr/share/nginx/html/style.css
 COPY src/ /usr/share/nginx/html/src/
+# Embeddable widget for third-party sites (embed/monster-captcha.js) plus its
+# integration demo. Served from the same origin as the challenge, because the
+# widget derives the challenge origin from its own script src.
+COPY embed/ /usr/share/nginx/html/embed/
 
 EXPOSE 80
 

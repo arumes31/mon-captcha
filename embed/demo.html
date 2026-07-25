@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monster CAPTCHA — integration demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         max-width: 680px; margin: 40px auto; padding: 0 20px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.sub { color: #6b7280; margin-top: 0; }
+  form { border: 1px solid #d3d3d3; border-radius: 8px; padding: 22px; margin: 24px 0; }
+  label { display: block; font-weight: 600; margin: 14px 0 4px; }
+  input[type=text], input[type=email] { width: 100%; padding: 9px 11px; box-sizing: border-box;
+         border: 1px solid #c7c9cc; border-radius: 4px; font: inherit; }
+  button { margin-top: 18px; padding: 10px 20px; font: inherit; font-weight: 600; cursor: pointer;
+         border: 0; border-radius: 4px; background: #1a73e8; color: #fff; }
+  button[disabled] { background: #9aa0a6; cursor: not-allowed; }
+  pre { background: #f4f5f7; border: 1px solid #e3e5e8; border-radius: 6px; padding: 12px;
+        overflow-x: auto; font-size: 13px; }
+  .note { border-left: 3px solid #e0a800; background: #fff8e5; padding: 10px 14px; border-radius: 0 4px 4px 0; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14161a; color: #e8eaed; }
+    form, pre { background: #1c1f26; border-color: #333842; }
+    .note { background: #2a2413; border-color: #b8860b; }
+    input[type=text], input[type=email] { background: #14161a; color: #e8eaed; border-color: #333842; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Monster CAPTCHA</h1>
+<p class="sub">A demo of embedding the challenge on a third-party site.</p>
+
+<div class="note">
+  <strong>Verification.</strong> With <code>data-verify</code> set, the challenge frame exchanges its
+  result for an HMAC-signed token that your backend checks via <code>POST /siteverify</code>.
+  Without it the widget still works, but the token is <em>unverifiable</em> and the callback
+  reports <code>verified: false</code>. See <code>docs/INTEGRATION.md</code>.
+</div>
+
+<form id="signup" method="POST" action="#">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" placeholder="you@example.com" required>
+
+  <label>Verification</label>
+  <!-- This is the entire integration. -->
+  <div class="monster-captcha"
+       data-sitekey="demo-site-key"
+       data-verify="http://localhost:8091"
+       data-callback="onVerified"
+       data-expired-callback="onExpired"></div>
+
+  <button id="submit" type="submit" disabled>Create account</button>
+</form>
+
+<h3>What the host page receives</h3>
+<pre id="out">(nothing yet — click the checkbox)</pre>
+
+<h3>What your backend then does</h3>
+<pre>curl -X POST http://localhost:8091/siteverify \
+  -H 'content-type: application/json' \
+  -d '{"secret":"demo-secret","response":"&lt;the token above&gt;"}'
+
+# =&gt; {"success":true,"challenge_ts":"...","hostname":"localhost","points":6}
+# A second call with the same token =&gt; {"success":false,"error-codes":["timeout-or-duplicate"]}</pre>
+
+<script>
+  function onVerified(token, info) {
+    document.getElementById('submit').disabled = false;
+    document.getElementById('out').textContent =
+      'token:    ' + token + '\n' +
+      'verified: ' + info.verified + (info.verified ? '' : '   <-- decorative, no issuer configured') + '\n' +
+      'points:   ' + info.points + '\n' +
+      'seed:     ' + info.seed;
+  }
+  function onExpired(reason) {
+    document.getElementById('submit').disabled = true;
+    document.getElementById('out').textContent = 'challenge closed: ' + reason;
+  }
+  document.getElementById('signup').addEventListener('submit', function (e) {
+    e.preventDefault();
+    alert('Would POST "' + window.MonsterCaptcha.FIELD_NAME + '" to your server for verification.');
+  });
+</script>
+
+<!-- Point this at wherever the challenge is hosted; the widget derives the
+     challenge origin from this script's own src. -->
+<script src="http://localhost:8080/embed/monster-captcha.js" defer></script>
+
+</body>
+</html>
