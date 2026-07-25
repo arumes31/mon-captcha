@@ -84,8 +84,18 @@ button:focus-visible {
     width: 100%;
     height: 100%;
     z-index: 1;
-    /* item 421: brightness slider — set on <html> by the accessibility
-       panel so it cascades here without touching engine.js/renderer code */
+}
+
+/* item 421: brightness slider — set on <html> by the accessibility panel so it
+   cascades here without touching engine.js/renderer code.
+   PERF: this used to be an UNCONDITIONAL `filter: brightness(...)` on the
+   element that hosts the WebGL canvas. A CSS filter — even brightness(1),
+   which is a visual no-op — forces the compositor to route the full-viewport
+   canvas through a filter step every composited frame instead of presenting it
+   directly, so every player paid for a control almost none of them touch.
+   ui.js now sets data-brightness on <html> only while the value is actually
+   off 1, so the default session composites the canvas untouched. */
+html[data-brightness] #captcha-container {
     filter: brightness(var(--scene-brightness, 1));
     transition: filter 0.15s ease;
 }
@@ -501,9 +511,22 @@ html.pref-colorblind #crosshair.hovering::before {
     transition: opacity 0.3s ease;
 }
 
+/* PERF: opacity:0 alone left this full-viewport overlay — and its
+   backdrop-filter: blur(7px) saturate(1.1), plus the infinite CSS animations
+   on the card inside it — live over the canvas for the whole session. The
+   delayed `visibility` step takes it out of rendering entirely once the fade
+   has finished, while the 0.3s opacity transition still plays exactly as
+   before (visibility flips at the END of the fade on hide, and immediately on
+   show, which is what the 0s/0.3s delay pair encodes). */
+#click-to-play {
+    transition: opacity 0.3s ease, visibility 0s linear 0s;
+}
+
 #click-to-play.hidden {
     opacity: 0;
     pointer-events: none;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0s linear 0.3s;
 }
 
 #click-to-play-card {
@@ -1119,12 +1142,18 @@ body.touch-mode #touch-controls {
         radial-gradient(90% 55% at 50% 92%, rgba(255, 171, 64, 0.5), rgba(255, 171, 64, 0) 70%),
         linear-gradient(180deg, #191014 0%, #33201a 45%, #6e3a20 80%, #a05a24 100%);
     color: var(--cream);
-    transition: opacity 0.4s ease;
+    transition: opacity 0.4s ease, visibility 0s linear 0s;
 }
 
+/* PERF: same as #click-to-play — without the delayed `visibility` step this
+   full-viewport layered-gradient panel, and the infinite voxel-hop/voxel-shadow
+   animations on the spinner inside it, stayed live over the canvas for the
+   entire session after loading finished. */
 #loading.hidden {
     opacity: 0;
     pointer-events: none;
+    visibility: hidden;
+    transition: opacity 0.4s ease, visibility 0s linear 0.4s;
 }
 
 #loading p {

@@ -27,7 +27,7 @@ import { state } from './state.js';
 import { mulberry32 } from './random.js';
 import { getGroundY, isWaterAt, VENT, PARTITION } from './heightfield.js';
 import { spawnParticleBurst } from './particles.js';
-import { weatherState } from './weather/weather.js';
+import { weatherCur, weatherNext } from './weather/weather.js';
 
 // Public registry (course polyline + head pool + steam junction), read by the
 // ?probe hook and lavaAt below. Empty until buildLava() runs.
@@ -460,8 +460,8 @@ export function updateLava(dt, elapsed) {
         if (!low) {
             // item 238: heavier steam while rain actually hits the hot flow —
             // ties precipitation state to the steam column's density/opacity.
-            const ws = weatherState();
-            const raining = ws.cur === 'rain' || ws.cur === 'thunderstorm' || ws.next === 'rain' || ws.next === 'thunderstorm';
+            const wc = weatherCur(), wn = weatherNext();
+            const raining = wc === 'rain' || wc === 'thunderstorm' || wn === 'rain' || wn === 'thunderstorm';
             const rainBoost = raining ? 1.7 : 1.0;
             const arr = state.lavaSteam.geometry.attributes.position.array;
             const { puffs, baseY } = state.lavaSteamData;
@@ -484,8 +484,7 @@ export function updateLava(dt, elapsed) {
     // item 240: ash-fall drift, visible only while the local weather sits in
     // 'overcast' (falls DOWN toward the ground, unlike the rising ember/haze)
     if (state.lavaAsh && state.lavaAshData) {
-        const ws2 = weatherState();
-        const overcastish = ws2.cur === 'overcast' || ws2.next === 'overcast';
+        const overcastish = weatherCur() === 'overcast' || weatherNext() === 'overcast';
         state.lavaAsh.visible = !low && overcastish;
         if (!low && overcastish) {
             const arr = state.lavaAsh.geometry.attributes.position.array;

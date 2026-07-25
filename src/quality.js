@@ -74,6 +74,8 @@ let _bloomBaseStrength = 0.22;
 // item 273: clear-day fog density baseline, captured once, so "fogginess" is
 // read as a ratio rather than needing any coupling to weather.js internals.
 let _fogBaseDensity = null;
+// item 282: reused selection array for the OutlinePass (see updateQualityFx).
+const _outlineSel = [];
 
 function persistTier(q) {
     try { sessionStorage.setItem(SESSION_KEY, q); } catch (e) { /* private mode / storage disabled */ }
@@ -262,7 +264,19 @@ function applyQualityTier() {
         const cap = PIXEL_RATIO_CAP_BY_TIER[q] || CONFIG.PIXEL_RATIO_HIGH;
         // item 379: _resScale is 1 outside the emergency low-tier floor, so
         // this is a no-op multiply for every normal tier/device.
-        state.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap) * _resScale);
+        const pr = Math.min(window.devicePixelRatio || 1, cap) * _resScale;
+        state.renderer.setPixelRatio(pr);
+        // PERF (framedrop pass): the composer has its OWN pixel ratio, captured
+        // from the renderer once in EffectComposer's constructor and never
+        // refreshed afterwards. Its ping-pong targets — and every pass's
+        // internal targets, including UnrealBloomPass's whole mip chain — are
+        // sized _width * _pixelRatio, so without this call stepping the tier
+        // down shrank ONLY the final canvas: the entire post chain, which is
+        // where most of the fill rate goes, kept rendering at the original
+        // (up to 2x dpr) resolution. That made the single biggest lever in the
+        // tier ladder almost a no-op, which is a large part of why a struggling
+        // device never actually recovered after the stepper dropped a tier.
+        if (state.composer) state.composer.setPixelRatio(pr);
     }
     // Phase 4b (item 344): bind the distance-LOD radii to the tier machine —
     // low culls/simplifies sooner (always cheaper); high is generous (the
@@ -335,22 +349,46 @@ function updateQualityFx(dt) {
     // item 282: keep the outline synced to whichever creature targeting.js
     // currently has hovered (state.targetHover — already CAPTURE_RANGE-gated
     // by targeting.js itself, so no distance check needed here).
+    // Reuse one array instead of allocating a fresh literal every frame. Beyond
+    // the garbage, OutlinePass only early-outs when selectedObjects is EMPTY —
+    // and when it is not, it renders the whole scene twice more. Keeping the
+    // same array and mutating its length makes the "nothing hovered" case an
+    // unambiguous, allocation-free empty.
     if (state.outlinePass) {
         const t = state.targetHover;
-        state.outlinePass.selectedObjects = (t && t.group) ? [t.group] : [];
+        if (t && t.group) { _outlineSel.length = 1; _outlineSel[0] = t.group; }
+        else _outlineSel.length = 0;
+        state.outlinePass.selectedObjects = _outlineSel;
     }
 }
 
+/* ------------------------------------------------------------
+   The auto-stepper's input. This used to ring-buffer INSTANTANEOUS
+   fps (1/dt) and average THOSE — an arithmetic mean of reciprocals,
+   which is not the frame rate. It weights fast frames far more
+   heavily than slow ones, so it systematically over-reports exactly
+   in the stuttery case the stepper exists to catch:
+
+     frames alternating 8ms and 60ms
+       mean(1/dt)         = (125 + 16.7) / 2  = 70.8  "fps"
+       true rate          = 2 frames / 0.068s = 29.4   fps
+
+   At 70.8 the reported figure sits above FPS_UP_THRESHOLD (52), so a
+   session dropping half its frames did not merely fail to step DOWN —
+   it stepped UP, adding cost to an already-hitching frame. Ring the
+   frame TIMES instead and divide count by their sum: that is the real
+   average frame rate over the window (the harmonic mean of 1/dt), and
+   one 60ms frame now drags it down as much as it actually hurts.
+   ------------------------------------------------------------ */
 export function recordFps(dt) {
     if (dt <= 0) return;
-    const fps = 1 / dt;
-    state.fpsRing[state.fpsRingIdx] = fps;
+    state.fpsRing[state.fpsRingIdx] = dt;
     state.fpsRingIdx = (state.fpsRingIdx + 1) % CONFIG.FPS_SAMPLE_FRAMES;
     if (state.fpsRingFilled < CONFIG.FPS_SAMPLE_FRAMES) state.fpsRingFilled++;
 
     let sum = 0;
     for (let i = 0; i < state.fpsRingFilled; i++) sum += state.fpsRing[i];
-    state.fps = state.fpsRingFilled ? sum / state.fpsRingFilled : 0;
+    state.fps = sum > 0 ? state.fpsRingFilled / sum : 0;
 
     // Quality check bounds limits
     if (state.fps < CONFIG.FPS_DOWN_THRESHOLD) {

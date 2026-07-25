@@ -61,6 +61,13 @@ function animate() {
 
     let dt = elapsedMs / 1000;
     state.clock.last = now;
+    // One monotonically increasing id per ACCEPTED game frame. Anything that
+    // must happen at most once per frame — even though it is reached from
+    // several renderer.render() passes — keys off this rather than counting
+    // its own invocations (terrain.js's water-mirror cadence does exactly
+    // that: EffectComposer's RenderPass and OutlinePass each re-enter the
+    // Water hook, so an invocation counter there would advance 1-3x a frame).
+    state.frameId = (state.frameId + 1) | 0;
 
     if (!isFinite(dt) || dt <= 0) dt = 1 / 60;
     if (dt > 0.1) dt = 0.1;
@@ -91,6 +98,16 @@ function animate() {
     updateWeather(dt, elapsed);     // applies hemi/exposure/fog, folding in state.caveFx
 
     updateCulling();                // Phase 4b: per-frame chunk occlusion + flora LOD ring
+
+    // Re-arm the single shadow depth pass for this frame. shadowMap.autoUpdate
+    // is permanently false (see engine.js createRenderer) so that the FIRST
+    // renderer.render() below does the pass and every other render() the frame
+    // issues — Water's mirror hook, OutlinePass's two full-scene passes, every
+    // composer fullscreen quad — early-outs instead of redoing it. Skipped
+    // while state.shadowFrozen (engine.js's idle branch), which reuses the
+    // previous frame's map exactly as before.
+    if (state.renderer && !state.shadowFrozen) state.renderer.shadowMap.needsUpdate = true;
+
     renderFrame();
 }
 

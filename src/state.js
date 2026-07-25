@@ -87,6 +87,13 @@ export const state = {
     lowFpsFrames: 0,
     highFpsFrames: 0,
 
+    // Render scheduling. frameId counts ACCEPTED game frames (game.js's
+    // animate()); shadowFrozen is engine.js's idle latch, honoured by the
+    // once-per-frame shadow re-arm in animate(). See engine.js createRenderer
+    // for why the shadow pass is armed manually instead of via autoUpdate.
+    frameId: 0,
+    shadowFrozen: false,
+
     // Game flow
     isPaused: false,
 };

@@ -48,6 +48,32 @@ function createRenderer(container) {
     // (decided once here, before any material compiles against it — no
     // runtime-toggle recompile/flicker risk).
     renderer.shadowMap.type = isSoftware ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
+    /* ------------------------------------------------------------
+       PERF (framedrop pass) — ONE shadow pass per frame, not N.
+       WebGLRenderer.render() runs shadowMap.render() on EVERY call, and a
+       frame issues far more than one render() call with the real scene:
+         - EffectComposer's RenderPass                        (1)
+         - three/addons Water's mirror hook, nested inside it (1)
+         - OutlinePass, whenever a creature is hovered, renders the FULL
+           scene twice more (depth mask + prepare mask)       (2)
+           ...each of which re-entered the Water hook again   (2)
+       Every one of those repeated the entire 2048x2048 sun depth pass over
+       every shadow caster in the world, producing byte-identical output
+       each time — a DirectionalLight's shadow camera is driven by the
+       light's position/target (updateSunFollow pins it to the player), not
+       by whichever camera is rendering, so none of the repeats could
+       differ. Sweeping the crosshair across creatures while walking
+       flipped OutlinePass on and off, which is why the waste showed up as
+       framedrops *while moving* rather than as a steady lower framerate.
+
+       autoUpdate:false + needsUpdate:true is three's documented idiom for
+       exactly this: shadowMap.render() clears needsUpdate once it has run,
+       so the first render() of a frame does the pass and every later one
+       early-outs. game.js re-arms needsUpdate once per frame (and skips
+       re-arming while idle, which is what updateSunFollow's idle branch
+       used to express by toggling autoUpdate).
+       ------------------------------------------------------------ */
+    renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
     // Physically-based lighting defaults for next-gen look
     renderer.physicallyCorrectLights = true;
@@ -203,9 +229,16 @@ export function applyShadowMapSize(size) {
 // Only touches the projection matrix (cheap) when the target radius has
 // actually moved a meaningful amount, to avoid needless per-frame churn
 // while cruising at a roughly steady speed.
+// The deadband was 0.5 world units against a radius that ramps 45 -> 54 with
+// speed: every frame of acceleration/deceleration moved the target further
+// than that, so the ortho projection was rebuilt — and with it the whole
+// shadow texel grid rescaled, which makes shadow edges crawl — on essentially
+// every frame the player was changing speed. 2 units is still under 4% of the
+// radius (invisible as a coverage change) but collapses the churn to a handful
+// of rebuilds per accel/decel ramp instead of one per frame.
 let _lastFollowRadius = null;
 function applyFollowRadius(camera, r) {
-    if (_lastFollowRadius !== null && Math.abs(r - _lastFollowRadius) < 0.5) return;
+    if (_lastFollowRadius !== null && Math.abs(r - _lastFollowRadius) < 2) return;
     _lastFollowRadius = r;
     camera.left = -r; camera.right = r; camera.top = r; camera.bottom = -r;
     camera.updateProjectionMatrix();
@@ -222,8 +255,11 @@ let _fogBaseDensity = null;
 // predicate (tab hidden, or paused with the pointer unlocked) — in that
 // state creatures/player are already fully frozen (see creatures/behavior.js's
 // `frozen` gate and player.js's early-return), so re-running the shadow depth
-// pass every throttled frame is pure waste. Restores autoUpdate the instant
-// activity resumes so nothing ever renders a stale shadow while actually playing.
+// pass every throttled frame is pure waste. Publishes state.shadowFrozen; the
+// once-per-frame re-arm in game.js's animate() honours it and stops re-arming,
+// so the last depth pass is simply reused. (This used to flip
+// renderer.shadowMap.autoUpdate directly, which no longer works now that
+// autoUpdate is permanently false — see the note in createRenderer above.)
 let _shadowIdle = false;
 
 // Recenters the (dynamically sized, see item 34) shadow frustum on the
@@ -247,6 +283,7 @@ export function updateSunFollow(camera) {
         _lastFollowRadius = null;
         _fogBaseDensity = null;
         _shadowIdle = false;
+        state.shadowFrozen = false;
     }
 
     const locked = state.controls && state.controls.isLocked;
@@ -254,16 +291,14 @@ export function updateSunFollow(camera) {
     if (idle) {
         if (!_shadowIdle) {
             _shadowIdle = true;
-            if (state.renderer) state.renderer.shadowMap.autoUpdate = false;
+            state.shadowFrozen = true;
         }
         return; // frozen scene: skip repositioning and reuse the last depth pass
     }
     if (_shadowIdle) {
         _shadowIdle = false;
-        if (state.renderer) {
-            state.renderer.shadowMap.autoUpdate = true;
-            state.renderer.shadowMap.needsUpdate = true;
-        }
+        state.shadowFrozen = false;
+        if (state.renderer) state.renderer.shadowMap.needsUpdate = true;
     }
 
     const speed = (state.player && state.player.velocity) ? state.player.velocity.length() : 0;

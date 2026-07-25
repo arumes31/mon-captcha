@@ -19,7 +19,7 @@ import { CONFIG } from '../config.js';
 import { CAVES, getGroundY, caveCeilingAt } from '../heightfield.js';
 import { getCaveThemeDescriptor } from '../caves/caves-registry.js';
 import { CREATURE_TYPES } from './bestiary.js';
-import { makeRecord } from './spawn.js';
+import { makeRecord, golemsRemaining } from './spawn.js';
 import { caveDeadEnds, caveDeepPoint } from '../caves/caves-gameplay.js';
 
 const byId = (id) => CREATURE_TYPES.find(t => t.id === id);
@@ -130,6 +130,11 @@ function placeGuardian(cave) {                                  // item 71 (+ it
     place(def, ch.x, getGroundY(ch.x, ch.z), ch.z, { roostHome: { x: ch.x, z: ch.z }, guardR: 6.5, inCave: true, _deepPrize: true });
 }
 function placeSleeper(cave) {                                   // item 70
+    // slumberTroll is plan:'golem', and this runs once per 'mineral-ore'/'bat'
+    // cave — i.e. it scales with the cave count, independently of the surface
+    // deck's own golem cap. Share the one world budget (spawn.js) so the two
+    // paths cannot together exceed CONFIG.MAX_GOLEMS_PER_WORLD.
+    if (golemsRemaining() <= 0) return;
     const def = byId('slumberTroll'); if (!def) return;
     const ch = pickChamber(cave); if (!ch) return;
     place(def, ch.x, getGroundY(ch.x, ch.z), ch.z, { inCave: true });

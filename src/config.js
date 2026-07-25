@@ -128,6 +128,12 @@ export const CONFIG = {
     PLAYER_CROUCH_EYE_HEIGHT: 1.0, // Ctrl/C: duck under belly-crawl low squeezes (Phase 2f item 10)
     PLAYER_CROUCH_SLOWDOWN: 0.45,  // crawl speed while crouched
     PLAYER_RADIUS: 0.4,
+    // Drop (world units) below which stepping down is absorbed by player.js's
+    // smooth terraced-height lerp instead of becoming a real fall. MUST stay
+    // above VOXEL_SIZE (0.85): getGroundY snaps to voxel column tops, so
+    // ordinary downhill ground descends in 0.85 steps and anything lower than
+    // that turns every step into a free-fall/land cycle. See player.js.
+    PLAYER_LEDGE_DROP: 1.3,
     // Cave minimum navigable half-width (Phase 2m). Every walkable cave node is
     // clamped to at least this so the player is never forced to clip through
     // rock to progress: PLAYER_RADIUS (0.4) + a 0.9 comfort margin. A "squeeze"
@@ -343,7 +349,18 @@ export const CONFIG = {
     // shadow-casters don't pop in mid-sprint. Reaches RADIUS_MAX at
     // SPEED_REF (world units/s, matches PLAYER_MAX_SPEED) and eases back
     // down at low speed.
-    SHADOW_FOLLOW_RADIUS_MAX: 70,
+    // 70 was self-defeating: the arena half-extent is 50, so a 70-unit half
+    // extent is a 140x140 frustum that wholly CONTAINS the 100x100 world.
+    // At PLAYER_MAX_SPEED the follow frustum therefore stopped following
+    // anything and simply re-admitted every shadow caster in the game to the
+    // depth pass — precisely the "virtually every shadow-casting object was
+    // being resubmitted every frame" state that SHADOW_FOLLOW_RADIUS (45,
+    // above) exists to prevent, re-entered exactly while the player moves.
+    // It also coarsened the shadow texel grid by the same factor mid-sprint.
+    // 54 keeps item 34's anti-pop headroom (a caster still enters the frustum
+    // ~1.1s before it can reach the player at top speed) without ever growing
+    // the pass back to whole-world scale.
+    SHADOW_FOLLOW_RADIUS_MAX: 54,
     SHADOW_FOLLOW_SPEED_REF: 8.0,
     // item 39: extra PCFSoft shadow.radius blended in under heavy fog/
     // overcast (softens contrast instead of only tinting the fog itself).
@@ -353,6 +370,20 @@ export const CONFIG = {
     // ?quality=/?photo handling), never reached by the automatic FPS
     // stepper, matching gpu-detect.js's "only act on high-confidence
     // signals" stance (it can confirm a WEAK device, not a strong one).
+    // Radius (world units) inside which detail flora actually gets its
+    // per-frame wind sway recomputed. Beyond it the sway is under a pixel of
+    // screen motion (see the derivation in atmosphere.js), so instances are
+    // parked at their rest pose instead of paying a trig + matrix compose +
+    // buffer write every frame. 9999 restores "sway the whole world".
+    WIND_SWAY_RADIUS: 40,
+
+    // three/addons Water's mirror pass re-renders the WHOLE scene into its
+    // reflection target. Render it every Nth frame instead of every frame (see
+    // the long note at terrain.js's onBeforeRender wrapper). 1 restores the
+    // original every-frame behaviour; 2 halves the cost for a reflection that
+    // is already distorted by the normal map and blended at alpha 0.84.
+    WATER_MIRROR_FRAME_SKIP: 2,
+
     SHADOW_MAP_ULTRA: 4096,
     PIXEL_RATIO_ULTRA: 3,
     // item 379: emergency resolution-scale lever below PIXEL_RATIO_LOW for
@@ -527,7 +558,23 @@ export const CONFIG = {
     GOLEM_STOMP_SHAKE_MAG: 0.02,
     GOLEM_STOMP_SHAKE_TIME: 0.28,
     GOLEM_STOMP_SHAKE_FREQ: 17,        // rad/s — well below camera-shake.js's 53 default: reads as a heavy thud, not a rattle
-    GOLEM_STOMP_RANGE: 30,
+    // 30 was far too wide to be a "a heavy thing landed right next to me" cue:
+    // it is nearly a third of the 100-unit arena, so at any moment several
+    // golems were inside it, each re-triggering every 0.4-0.6s against a 0.28s
+    // shake — the screen never got back to rest. 14 (plus the quadratic
+    // falloff in creatures/behavior.js and camera-shake.js's MIN_SHAKE_MAG
+    // floor) means only a golem within ~11 units moves the camera at all.
+    GOLEM_STOMP_RANGE: 14,
+    // Hard ceiling on golem-plan creatures in a world. Golems are the only
+    // species whose FOOTSTEPS drive the screen-shake bus (item 477), and they
+    // do it continuously — a stomp every 0.4-0.6s each, for as long as one is
+    // near you. Six species carry plan:'golem' (stone/moss/elder/magma/crystal
+    // plus the cave-only slumberTroll) and they reach the world through
+    // several independent paths, so a seed could easily field a dozen; the
+    // measured worst case was 14, which is why the shake never let up. Capping
+    // the POPULATION is the blunt, reliable lever — the shake can then only
+    // ever come from one creature. See creatures/spawn.js capGolems().
+    MAX_GOLEMS_PER_WORLD: 1,
 
     // item 478: splash-ring size multiplier ceiling — a capture ball settling
     // into water sizes its ripple by the CAUGHT creature's tier (a stand-in

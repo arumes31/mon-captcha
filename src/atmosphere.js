@@ -556,6 +556,69 @@ function swayInstance(details, i, elapsed, amp) {
     chunkSetMatrix(state.detailChunks, i, envDummy.matrix);
 }
 
+/* ------------------------------------------------------------
+   Park one instance at its authored rest pose (no sway term). Used when an
+   instance leaves WIND_SWAY_RADIUS, so an out-of-range instance always holds
+   ONE deterministic pose rather than freezing wherever its sine happened to
+   be — otherwise a screenshot of distant flora would depend on where the
+   player had walked earlier, which would make the visreg baselines
+   irreproducible.
+   ------------------------------------------------------------ */
+function parkInstance(details, i) {
+    const d = details[i];
+    envDummy.position.set(d.x, d.y, d.z);
+    envDummy.scale.set(d.sx, d.sy, d.sz);
+    envDummy.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
+    envDummy.updateMatrix();
+    chunkSetMatrix(state.detailChunks, i, envDummy.matrix);
+}
+
+/* ------------------------------------------------------------
+   PERF (framedrop pass) — sway only what is close enough for the sway to be
+   VISIBLE. This loop used to run over every grass/reed/lily and every canopy
+   leaf in the world, every frame, with no distance or visibility test:
+   measured 925 + 6,977 = 7,902 instances, each paying two trig calls, a full
+   Euler->quaternion->Matrix4 compose and a 16-float buffer write. That is
+   several milliseconds of pure JS per frame out of a 16.6ms budget, spent
+   overwhelmingly on flora too far away to see move.
+
+   How far is "too far"? A grass blade is ~0.3 units tall and sways 0.08 rad,
+   so its tip travels ~0.024 units; a canopy leaf cluster ~0.6 units at 0.06
+   rad travels ~0.036. At this camera (75 deg vertical FOV over 720px) one
+   pixel subtends ~0.0018 rad, so the motion falls under a single pixel past
+   roughly 13 units for grass and 20 for leaves. CONFIG.WIND_SWAY_RADIUS is
+   set well beyond both, and instances outside it are parked once (not
+   re-written per frame), which also stops their sector chunks from
+   re-uploading their instanceMatrix buffers to the GPU every frame.
+
+   Per-list `resting` flags are rebuilt whenever terrain.js hands us a new
+   index list, so a destroy()/init() cycle can never reuse a stale one.
+   ------------------------------------------------------------ */
+let _restLightFor = null, _restLight = null;
+let _restLeavesFor = null, _restLeaves = null;
+
+function restFlags(list, forRef, cur) {
+    if (forRef === list && cur && cur.length === list.length) return cur;
+    return new Uint8Array(list.length);
+}
+
+function swayList(details, list, resting, elapsed, amp, cx, cz, r2) {
+    let touched = false;
+    for (let n = 0; n < list.length; n++) {
+        const i = list[n];
+        const d = details[i];
+        const dx = d.x - cx, dz = d.z - cz;
+        if (dx * dx + dz * dz > r2) {
+            if (!resting[n]) { resting[n] = 1; parkInstance(details, i); touched = true; }
+            continue;
+        }
+        resting[n] = 0;
+        swayInstance(details, i, elapsed, amp);
+        touched = true;
+    }
+    return touched;
+}
+
 // Reusable colour scratch for the cloud weather-tint below (never allocated per frame)
 const _cloudTint = new THREE.Color();
 const _cA_FLASH = new THREE.Color(0xf5f7ff);
@@ -611,19 +674,21 @@ export function updateEnvironmentAnim(elapsed) {
     if (state.detailChunks && state.detailInstances) {
         const details = state.detailInstances;
         const gust = 1 + (state.weatherWind || 0) * 1.6; // calm ~1.0, storm ~2.5x
+        const cam = state.camera;
+        const cx = cam ? cam.position.x : 0, cz = cam ? cam.position.z : 0;
+        const swayR = CONFIG.WIND_SWAY_RADIUS;
+        const swayR2 = (swayR >= 9000) ? Infinity : swayR * swayR; // >=9000 restores the old sway-everything behaviour
         let touched = false;
         if (state.windLight && state.windLight.length) {
-            for (let n = 0; n < state.windLight.length; n++) {
-                swayInstance(details, state.windLight[n], elapsed, 0.08 * gust);
-            }
-            touched = true;
+            _restLight = restFlags(state.windLight, _restLightFor, _restLight);
+            _restLightFor = state.windLight;
+            touched = swayList(details, state.windLight, _restLight, elapsed, 0.08 * gust, cx, cz, swayR2) || touched;
         }
         // canopy leaves are the bulk of the animated set — skip them on low tier
         if (state.windLeaves && state.windLeaves.length && state.qualityLevel !== 'low') {
-            for (let n = 0; n < state.windLeaves.length; n++) {
-                swayInstance(details, state.windLeaves[n], elapsed, 0.06 * gust);
-            }
-            touched = true;
+            _restLeaves = restFlags(state.windLeaves, _restLeavesFor, _restLeaves);
+            _restLeavesFor = state.windLeaves;
+            touched = swayList(details, state.windLeaves, _restLeaves, elapsed, 0.06 * gust, cx, cz, swayR2) || touched;
         }
         // upload only the sector chunks touched by the sway this frame
         if (touched) chunkFlushDirty(state.detailChunks);
