@@ -76,6 +76,9 @@ let _bloomBaseStrength = 0.22;
 let _fogBaseDensity = null;
 // item 282: reused selection array for the OutlinePass (see updateQualityFx).
 const _outlineSel = [];
+// Last pixel ratio actually pushed to the renderer/composer, so a re-applied
+// tier that resolves to the same value does not rebuild render targets.
+let _lastPixelRatio = null;
 
 function persistTier(q) {
     try { sessionStorage.setItem(SESSION_KEY, q); } catch (e) { /* private mode / storage disabled */ }
@@ -265,18 +268,32 @@ function applyQualityTier() {
         // item 379: _resScale is 1 outside the emergency low-tier floor, so
         // this is a no-op multiply for every normal tier/device.
         const pr = Math.min(window.devicePixelRatio || 1, cap) * _resScale;
-        state.renderer.setPixelRatio(pr);
-        // PERF (framedrop pass): the composer has its OWN pixel ratio, captured
-        // from the renderer once in EffectComposer's constructor and never
-        // refreshed afterwards. Its ping-pong targets — and every pass's
-        // internal targets, including UnrealBloomPass's whole mip chain — are
-        // sized _width * _pixelRatio, so without this call stepping the tier
-        // down shrank ONLY the final canvas: the entire post chain, which is
-        // where most of the fill rate goes, kept rendering at the original
-        // (up to 2x dpr) resolution. That made the single biggest lever in the
-        // tier ladder almost a no-op, which is a large part of why a struggling
-        // device never actually recovered after the stepper dropped a tier.
-        if (state.composer) state.composer.setPixelRatio(pr);
+        // Only touch the pixel ratio when it actually CHANGES. Both calls below
+        // reallocate GPU render targets — composer.setPixelRatio() re-runs
+        // setSize() across the ping-pong pair and every pass's internal targets,
+        // including UnrealBloomPass's whole mip chain. applyQualityTier() is
+        // reached from stepQualityUp()/stepQualityDown() on a timer whenever the
+        // measured FPS sits outside the hysteresis band, INCLUDING when the tier
+        // is already at its ceiling and nothing changes — so without this guard
+        // a machine comfortably holding the frame cap would rebuild its entire
+        // post-processing chain every FPS_UP_FRAMES frames, i.e. a periodic
+        // hitch caused purely by running well.
+        if (_lastPixelRatio !== pr) {
+            _lastPixelRatio = pr;
+            state.renderer.setPixelRatio(pr);
+            // PERF (framedrop pass): the composer has its OWN pixel ratio,
+            // captured from the renderer once in EffectComposer's constructor
+            // and never refreshed afterwards. Its ping-pong targets — and every
+            // pass's internal targets, including UnrealBloomPass's whole mip
+            // chain — are sized _width * _pixelRatio, so without this call
+            // stepping the tier down shrank ONLY the final canvas: the entire
+            // post chain, where most of the fill rate goes, kept rendering at
+            // the original (up to 2x dpr) resolution. That made the single
+            // biggest lever in the tier ladder almost a no-op, which is a large
+            // part of why a struggling device never actually recovered after
+            // the stepper dropped a tier.
+            if (state.composer) state.composer.setPixelRatio(pr);
+        }
     }
     // Phase 4b (item 344): bind the distance-LOD radii to the tier machine —
     // low culls/simplifies sooner (always cheaper); high is generous (the
@@ -414,6 +431,7 @@ function stepQualityDown() {
     // itself (keep shadows enabled always — toggling shadowMap.enabled at
     // runtime recompiles shaders and can flash black; shrinking the map is the
     // cheap, safe lever instead).
+    const wasTier = state.qualityLevel, wasScale = _resScale;
     if (state.qualityLevel === 'high') state.qualityLevel = 'medium';
     else if (state.qualityLevel === 'medium') state.qualityLevel = 'low';
     else if (state.qualityLevel === 'low') {
@@ -422,12 +440,18 @@ function stepQualityDown() {
         // pushed to an unusably small framebuffer.
         _resScale = Math.max(CONFIG.PIXEL_RATIO_FLOOR / CONFIG.PIXEL_RATIO_LOW, _resScale * CONFIG.PIXEL_RATIO_STEP);
     }
+    // Already at the floor (tier 'low' AND the resolution scale pinned at
+    // PIXEL_RATIO_FLOOR): nothing changed, so re-running the reconcile would
+    // just resize the shadow map and rebuild the composer targets on a device
+    // that is ALREADY struggling — the worst possible moment for a hitch.
+    if (state.qualityLevel === wasTier && _resScale === wasScale) return;
     applyQualityTier();
 }
 
 function stepQualityUp() {
     state.highFpsFrames = 0;
     if (_qualityLocked) return;
+    const wasTier = state.qualityLevel, wasScale = _resScale;
     if (state.qualityLevel === 'low' && _resScale < 1) {
         // item 379: climb back out of the emergency resolution floor before
         // promoting tiers again.
@@ -437,5 +461,12 @@ function stepQualityUp() {
     // item 373: 'ultra' is manual-only — the auto-stepper's ceiling stays
     // 'high' even at sustained good FPS (see gpu-detect.js's note on only
     // acting on confirmed-strong signals, which this project doesn't have).
+    //
+    // Already at the ceiling with nothing to change: do NOT re-apply. A device
+    // holding the frame cap sits above FPS_UP_THRESHOLD forever, so this path
+    // is reached every FPS_UP_FRAMES frames for the rest of the session, and
+    // applyQualityTier() resizes the shadow map and reconciles the whole
+    // composer. Reapplying an unchanged tier is pure hitch.
+    if (state.qualityLevel === wasTier && _resScale === wasScale) return;
     applyQualityTier();
 }

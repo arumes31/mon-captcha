@@ -139,7 +139,23 @@ export const CONFIG = {
     // rock to progress: PLAYER_RADIUS (0.4) + a 0.9 comfort margin. A "squeeze"
     // (belly-crawl, choke) now reduces HEIGHT only (crouch) — never width below
     // this passable floor. Chambers/cathedrals still swell well above it.
-    CAVE_MIN_NAV_HW: 1.3,
+    CAVE_MIN_NAV_HW: 1.8,
+    /* --------------------------------------------------------
+       Cave count / spacing. Was a hard-coded `2 + floor(rng()*3)` (2..4) with
+       an 8-unit separation test in caves-data.js. Fewer but BIGGER caves:
+       every extra cave is another rock shell that can interpenetrate a
+       neighbour's — topology branches (bridge galleries, shafts, junction
+       arms) extend a cave AFTER the placement separation check, so they reach
+       further than the check accounted for, and the final overlap pass then
+       silently DROPS one of the two. Cutting the count and widening the
+       spacing means fewer shells competing for the same flank, so fewer
+       late drops and far less chance of two shells meshing through each other.
+       CAVE_MIN_NAV_HW rises with it (1.3 -> 1.8): the caves that remain are
+       properly roomy rather than belly-crawl width.
+       -------------------------------------------------------- */
+    CAVE_COUNT_MIN: 2,
+    CAVE_COUNT_MAX: 3,
+    CAVE_SEPARATION: 14,
     PLAYER_ACCEL: 75,
     PLAYER_FRICTION: 12,
     PLAYER_MAX_SPEED: 8.0,
@@ -227,6 +243,11 @@ export const CONFIG = {
     // update rate instead of the full 180 FPS ceiling — no point simulating a
     // world nobody is looking at.
     IDLE_UPDATE_FPS: 8,
+    // Frame-rate ceiling for the live game loop (game.js animate()). Was an
+    // unnamed 1000/180 — i.e. effectively uncapped, since rAF is already
+    // vsync-bound. Capping at 60 stops a high-refresh display from paying full
+    // simulation + render cost 2-4x per displayed frame for no visible gain.
+    MAX_FPS: 60,
 
     // Shadow frustum half-extent, in world units, RECENTERED ON THE PLAYER
     // every frame (see engine.js's updateSunFollow) rather than fixed at the
@@ -571,10 +592,74 @@ export const CONFIG = {
     // near you. Six species carry plan:'golem' (stone/moss/elder/magma/crystal
     // plus the cave-only slumberTroll) and they reach the world through
     // several independent paths, so a seed could easily field a dozen; the
-    // measured worst case was 14, which is why the shake never let up. Capping
-    // the POPULATION is the blunt, reliable lever — the shake can then only
-    // ever come from one creature. See creatures/spawn.js capGolems().
-    MAX_GOLEMS_PER_WORLD: 1,
+    // measured worst case was 14, which is why the shake never let up.
+    // 4 keeps golems a real presence in the bestiary while bounding how many
+    // can stomp at once — the per-trigger fixes (quadratic distance falloff,
+    // GOLEM_STOMP_RANGE 14, camera-shake.js's MIN_SHAKE_MAG floor and its
+    // decay-aware accumulator) do the rest, and with a 14-unit range it is
+    // rare for more than one of four to be in range at a time.
+    // See creatures/spawn.js capGolems().
+    MAX_GOLEMS_PER_WORLD: 4,
+
+    /* --------------------------------------------------------
+       Cave/water separation.
+
+       Rule: a cave never intrudes on the water network at all — that is
+       already enforced for every ordinary cave by caves-data.js's
+       footprintHitsWater()/caveHitsRiver(), which reject any node whose rock
+       footprint reaches a river, pond or basin. The ONE deliberate exception
+       is the Phase 2f under-river crossing, and it used to burrow barely
+       beneath the surface: floorY -2.45 with a 2.3-high vault put its ceiling
+       at y = -0.15, fifteen centimetres under the water line and only ~0.7
+       below the riverbed. Where it crosses, it must instead run FAR below.
+
+       CLEARANCE is the minimum thickness of solid rock between the water line
+       (POND_WATER_LEVEL) and the top of the tunnel vault, held across the
+       river's full width INCLUDING its banks — not just the wet channel.
+
+       MAX_SLOPE bounds the approach ramps that reach that depth, as rise over
+       run. The crossing is walkable passage, so a ramp step must never exceed
+       PLAYER_LEDGE_DROP or player.js drops the player into free-fall on every
+       step (see the note there): at the 1.2-unit node spacing caves-shapes.js
+       uses, 0.62 gives a 0.74-unit step, comfortably inside the 1.3 budget.
+       The ramp length needed to reach CLEARANCE is derived from these two, so
+       raising CLEARANCE lengthens the tunnel rather than steepening it.
+       -------------------------------------------------------- */
+    CAVE_UNDER_WATER_CLEARANCE: 4.0,
+    CAVE_UNDER_WATER_MAX_SLOPE: 0.62,
+
+    // Lowest y a cave floor may reach. This is NOT a free parameter: terrain.js's
+    // column builder floors every voxel stack at -2.0, so ~-1.5 is the lowest
+    // top face it can still render — a cave floor below that would be standing
+    // room over nothing. caves-data.js clamps to this, and caves-shapes.js
+    // checks it before committing to an under-water crossing.
+    //
+    // It is deliberately ONE named knob rather than the two magic numbers it
+    // replaced, because the pending two-layer/overburden pass has to lower both
+    // together (column floor AND this) to allow genuinely deep tunnels. Until
+    // that lands, CAVE_UNDER_WATER_CLEARANCE (4.0) cannot be met by any legal
+    // floor, so no under-water crossing is generated at all — which is exactly
+    // the desired behaviour: a cave may not pass under water shallowly.
+    CAVE_FLOOR_MIN: -1.5,
+
+    /* --------------------------------------------------------
+       How far OUTWARD of the collision surface each cave-shell rock voxel's
+       CENTRE is placed (caves.js crossSection). The shell is built from
+       jittered, freely-yawed cubes whose worst-case lateral half-extent is
+       half * sqrt(2) + jitter ~= 1.0 world units.
+
+       LATERAL: the camera may reach hw - PLAYER_RADIUS. A wall voxel centred at
+       hw + inset has its inner face at hw + inset - reach, so keeping the camera
+       outside the rock needs
+           inset >= reach - PLAYER_RADIUS = 1.0 - 0.4 = 0.60.
+       VERTICAL: the head clamp is ceiling - 0.25 and a vault voxel's vertical
+       reach (no sqrt(2) term, pure half-extent + jitter) is ~0.76, so at the
+       crown it needs inset >= 0.76 - 0.25 = 0.51.
+
+       0.65 clears both with margin, and widens the visible passage by less than
+       one voxel. 0 restores the old centre-on-surface placement.
+       -------------------------------------------------------- */
+    CAVE_SHELL_INSET: 0.65,
 
     // item 478: splash-ring size multiplier ceiling — a capture ball settling
     // into water sizes its ripple by the CAUGHT creature's tier (a stand-in

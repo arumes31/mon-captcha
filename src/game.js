@@ -42,6 +42,10 @@ import { themeBuildLog } from './caves/caves-themes.js';
 /* ============================================================
    Game Animation Loop
    ============================================================ */
+// See the frame-gate note in animate(): absorbs rAF jitter so a cap that
+// matches the display refresh does not halve the frame rate.
+const FRAME_GATE_SLACK_MS = 1;
+
 function animate() {
     if (state.disposed) return;
     state.rafId = requestAnimationFrame(animate);
@@ -49,12 +53,28 @@ function animate() {
     const now = performance.now();
     const elapsedMs = now - state.clock.last;
 
-    // Idle throttle (item 356): when the tab is hidden, or the game is paused
-    // (pointer unlocked and not yet solved), there is no viewer — clamp the
-    // update rate instead of spinning at the 180 FPS ceiling. Otherwise 180 FPS.
+    /* Idle throttle (item 356): when the tab is hidden, or the game is paused
+       (pointer unlocked and not yet solved), there is no viewer — clamp the
+       update rate hard. Otherwise run to CONFIG.MAX_FPS.
+
+       FRAME_GATE_SLACK_MS is not a fudge factor, it is required. rAF on a
+       60Hz display fires every ~16.67ms but jitters either side of it, so
+       gating on `elapsed < 16.667` rejects every frame that arrives a
+       fraction early — and because the clock only advances on ACCEPTED
+       frames, the next one is then measured from the same origin and lands
+       at ~33ms. The result of naively capping at 60 on a 60Hz panel is a
+       solid 30 FPS. One millisecond of slack absorbs the jitter without
+       letting the average exceed the cap.
+
+       On a refresh rate that is not a multiple of MAX_FPS the achievable
+       rate is the largest submultiple of the panel that does not exceed the
+       cap (144Hz -> 48, 120Hz -> 60, 240Hz -> 60). That is the honest cost
+       of a hard cap; the alternative is overshooting it. */
     const locked = state.controls && state.controls.isLocked;
     const idle = (typeof document !== 'undefined' && document.hidden) || (state.isPaused && !locked);
-    const minMs = idle ? 1000 / CONFIG.IDLE_UPDATE_FPS : 1000 / 180;
+    const minMs = idle
+        ? 1000 / CONFIG.IDLE_UPDATE_FPS
+        : (1000 / CONFIG.MAX_FPS) - FRAME_GATE_SLACK_MS;
     if (elapsedMs < minMs) {
         return;
     }

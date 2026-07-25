@@ -204,22 +204,48 @@ function crossSection(cx, cz, nx, nz, floorY, hw, ceilH, dayK, rock, rng, capped
         return;
     }
     const sh = ceilH * 0.42; // springline — vertical walls below, vault above
-    // vertical lower walls at ±hw
+    /* SEE-THROUGH-WALLS FIX. The rock surface the player collides with is the
+       lateral half-width `hw` (heightfield.js caveConfine) and the vault curve
+       (caveCeilingAt). This code used to put each shell voxel's CENTRE exactly
+       on those surfaces — so half of every rock cube stuck out into the walkable
+       space, and the collision limits sat INSIDE the geometry.
+
+       Measured: pushShell scales a VOXEL_SIZE (0.85) cube by
+       oversize * (0.85 + rng()*0.45), giving a half-extent of 0.41-0.63; the
+       free `ry: rng()*PI` yaw swings the lateral half-extent up to half*sqrt(2)
+       = 0.89, and the position jitter adds another 0.11 inward. caveConfine
+       lets the camera reach hw - PLAYER_RADIUS (0.4) while the wall's inner
+       face sat at roughly hw - 0.49 (worst case hw - 1.05) — so hugging a wall
+       put the camera inside the cube, and with backface culling the wall simply
+       vanished and the outdoors showed through. Vertically it was worse: the
+       head clamp is ceiling - 0.25 but vault voxels reached ceiling - 0.76.
+
+       Offsetting the centres OUTWARD along the local surface normal by
+       CAVE_SHELL_INSET puts the rock's inner FACE on the collision surface
+       instead of its centre. The passage now looks exactly as wide as it
+       actually is, instead of looking narrower than it is while being
+       see-through. */
+    const inset = CONFIG.CAVE_SHELL_INSET;
+    // vertical lower walls at ±hw — normal is purely lateral
     for (const side of [-1, 1]) {
-        const wx = cx + nx * side * hw, wz = cz + nz * side * hw;
+        const wlat = hw + inset;
+        const wx = cx + nx * side * wlat, wz = cz + nz * side * wlat;
         for (let y = floorY + V * 0.5; y <= floorY + sh; y += V) pushShell(rock, wx, y, wz, floorY, dayK, rng, 1.14);
     }
-    // irregular vaulted ceiling from one springtop, over the peak, to the other
+    // irregular vaulted ceiling from one springtop, over the peak, to the other.
+    // The arch is parameterised by th, so (cos th, sin th) IS the outward radial
+    // direction — offset along it to lift the ring clear of the head clamp.
     const steps = Math.max(6, Math.round((Math.PI * hw) / (V * 0.7)));
     for (let s = 0; s <= steps; s++) {
         const th = (s / steps) * Math.PI;
-        const lat = Math.cos(th) * hw;
-        const y = floorY + sh + (ceilH - sh) * Math.sin(th);
+        const lat = Math.cos(th) * (hw + inset);
+        const y = floorY + sh + (ceilH - sh) * Math.sin(th) + Math.sin(th) * inset;
         pushShell(rock, cx + nx * lat, y, cz + nz * lat, floorY, dayK, rng, 1.16);
     }
-    if (capped) { // fill a dead-end pocket wall
+    if (capped) { // fill a dead-end pocket wall — the cap faces ALONG the tunnel,
+        // so it is offset by the caller (see buildTube); only its top follows the arch.
         for (let lat = -hw; lat <= hw; lat += V) {
-            const top = floorY + sh + (ceilH - sh) * Math.sqrt(Math.max(0, 1 - (lat / hw) ** 2));
+            const top = floorY + sh + (ceilH - sh) * Math.sqrt(Math.max(0, 1 - (lat / hw) ** 2)) + inset;
             for (let y = floorY + V * 0.5; y <= top; y += V) pushShell(rock, cx + nx * lat, y, cz + nz * lat, floorY, dayK, rng, 1.14);
         }
     }
