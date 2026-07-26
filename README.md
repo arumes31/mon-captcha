@@ -15,6 +15,7 @@
 [![Pages](https://github.com/arumes31/mon-captcha/actions/workflows/pages.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/pages.yml)
 [![GHCR](https://img.shields.io/badge/ghcr.io-arumes31%2Fmon--captcha-blue?logo=docker)](https://github.com/arumes31/mon-captcha/pkgs/container/mon-captcha)
 [![Live demo](https://img.shields.io/badge/demo-play%20now-2ea44f?logo=github)](https://arumes31.github.io/mon-captcha/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
 </div>
 
@@ -345,4 +346,6 @@ See [`tests/README.md`](tests/README.md) for the full suite and the SwiftShader/
 
 ## License
 
-No license has been chosen for this project yet — all rights reserved by default until one is added.
+[MIT](LICENSE) © 2026 arumes31 — use it, fork it, ship it commercially; just keep the copyright
+notice. The game ships no bundled dependencies (three.js resolves from the jsdelivr CDN at
+runtime under its own MIT license), so there is nothing else to attribute.
