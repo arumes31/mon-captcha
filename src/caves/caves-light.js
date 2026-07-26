@@ -123,7 +123,9 @@ export function buildCaveLight() {
 function buildLantern() {
     const l = new THREE.PointLight(0xffb673, 0, 13, 2);
     l.castShadow = false;
-    l.visible = false;
+    // Always visible, intensity-driven (see updateCaveLight): hiding it would
+    // change three's numPointLights define and relink every shader.
+    l.visible = true;
     state.scene.add(l);
     state.lantern = l;
 
@@ -358,15 +360,18 @@ export function updateCaveLight(dt, elapsed) {
     const l = state.lantern;
     if (l && state.camera) {
         if (mix > 0.01) {
-            l.visible = true;
             const cam = state.camera.position;
             state.camera.getWorldDirection(reuse.playerForward);
             const fwdx = reuse.playerForward.x, fwdz = reuse.playerForward.z;
             l.position.set(cam.x + fwdx * 0.6, cam.y - 0.2, cam.z + fwdz * 0.6);
             const flick = 0.9 + 0.06 * Math.sin(elapsed * 6.7) + 0.04 * Math.sin(elapsed * 11.3 + 1.1);
             l.intensity = LANTERN_BASE * mix * flick;
-        } else if (l.visible) {
-            l.visible = false; l.intensity = 0;
+        } else {
+            // Dim, never hide: .visible is part of three's shader program cache
+            // key (numPointLights), so toggling it here relinked every material
+            // in the scene the moment the player crossed a cave threshold. An
+            // intensity of 0 is free at runtime and keeps the count constant.
+            l.intensity = 0;
         }
     }
     const orb = state.caveLanternOrb;

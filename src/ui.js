@@ -273,6 +273,12 @@ function applyPrefs() {
     root.classList.toggle('pref-colorblind', prefs.colorblindSafe);
     root.style.setProperty('--hud-scale', String(prefs.hudScale));
     root.style.setProperty('--scene-brightness', String(prefs.brightness));
+    // item 421 + PERF: the brightness filter over the canvas host is now
+    // gated on this attribute (see style.css). At the default 1 the filter is
+    // a visual no-op but still costs a full-viewport compositor filter pass
+    // every frame, so only opt in once the slider has actually been moved.
+    if (Math.abs(prefs.brightness - 1) > 0.001) root.setAttribute('data-brightness', '');
+    else root.removeAttribute('data-brightness');
 }
 
 function initA11yPanel() {
@@ -450,6 +456,7 @@ export function captureSeedThumbnail(maxDim = CONFIG.SEED_THUMBNAIL_MAX_DIM) {
 let hudTickerRunning = false;
 let hudFrameCount = 0;
 let lastZoneId = null;
+let lastCompassDeg = null;
 let lastWeatherCur = null;
 let lastQualityLevel = null;
 let activeBreakoutUntil = 0;
@@ -471,15 +478,30 @@ function startHudTicker() {
     requestAnimationFrame(hudTick);
 }
 
+/* This is a SECOND rAF loop, independent of game.js's animate() and of its
+   idle/throttle gate. Everything in it writes DOM style properties and/or
+   scans the whole creature list, so running all of it at full rAF rate meant
+   a style recalculation every frame on top of the render — and it kept doing
+   so even on frames animate() itself had thrown away. The widgets here are
+   ambient HUD readouts, not gameplay-critical readouts, so the two that
+   actually cost something are amortised:
+     - updateLegendaryRadar walks every creature (with a sqrt each) and writes
+       four style properties; at 1/4 rate it still updates ~15x a second.
+     - checkBreakouts walks every creature purely to notice a flag flip that
+       stays true for seconds.
+   updateCompass stays per-frame: it tracks mouse-look directly, so anything
+   less reads as a laggy needle — but its zoneAt() probe is amortised inside
+   it (zones are tens of units across; the player cannot cross one in 8
+   frames). updateCooldownWipe/checkQualityDrop are a couple of comparisons. */
 function hudTick() {
     if (state.disposed) { hudTickerRunning = false; return; } // self-stop across a destroy()/init() cycle
     hudFrameCount++;
     updateCompass();
     if (hudFrameCount % 15 === 0) updateWeatherBadge(); // slow-changing — no need at 60fps
-    updateLegendaryRadar();
+    if (hudFrameCount % 4 === 0) updateLegendaryRadar();
     updateCooldownWipe();
     checkQualityDrop();
-    checkBreakouts();
+    if (hudFrameCount % 5 === 0) checkBreakouts();
     requestAnimationFrame(hudTick);
 }
 
@@ -490,10 +512,20 @@ function updateCompass() {
     if (!state.camera) return;
     if (ui.compassNeedle) {
         _euler.setFromQuaternion(state.camera.quaternion);
-        const deg = _euler.y * (180 / Math.PI);
-        ui.compassNeedle.style.transform = `rotate(${(-deg).toFixed(1)}deg)`;
+        const deg = -(_euler.y * (180 / Math.PI));
+        // Skip the write when the needle would not visibly move. toFixed(1)
+        // quantises to 0.1deg anyway, so anything finer built a throwaway
+        // string and dirtied style for a transform that resolves identical —
+        // and this runs every frame of the HUD ticker.
+        if (lastCompassDeg === null || Math.abs(deg - lastCompassDeg) >= 0.1) {
+            lastCompassDeg = deg;
+            ui.compassNeedle.style.transform = `rotate(${deg.toFixed(1)}deg)`;
+        }
     }
-    if (ui.compass) {
+    // zoneAt() is a real spatial query (see zones.js) and the zone under the
+    // player changes on a scale of seconds, not frames — probe it 8x less
+    // often. The tint itself is still only written on an actual zone change.
+    if (ui.compass && (hudFrameCount & 7) === 0) {
         const pos = state.camera.position;
         const zone = zoneAt(pos.x, pos.z);
         if (zone && zone.id !== lastZoneId) {

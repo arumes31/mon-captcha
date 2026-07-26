@@ -128,12 +128,34 @@ export const CONFIG = {
     PLAYER_CROUCH_EYE_HEIGHT: 1.0, // Ctrl/C: duck under belly-crawl low squeezes (Phase 2f item 10)
     PLAYER_CROUCH_SLOWDOWN: 0.45,  // crawl speed while crouched
     PLAYER_RADIUS: 0.4,
+    // Drop (world units) below which stepping down is absorbed by player.js's
+    // smooth terraced-height lerp instead of becoming a real fall. MUST stay
+    // above VOXEL_SIZE (0.85): getGroundY snaps to voxel column tops, so
+    // ordinary downhill ground descends in 0.85 steps and anything lower than
+    // that turns every step into a free-fall/land cycle. See player.js.
+    PLAYER_LEDGE_DROP: 1.3,
     // Cave minimum navigable half-width (Phase 2m). Every walkable cave node is
     // clamped to at least this so the player is never forced to clip through
     // rock to progress: PLAYER_RADIUS (0.4) + a 0.9 comfort margin. A "squeeze"
     // (belly-crawl, choke) now reduces HEIGHT only (crouch) — never width below
     // this passable floor. Chambers/cathedrals still swell well above it.
-    CAVE_MIN_NAV_HW: 1.3,
+    CAVE_MIN_NAV_HW: 1.8,
+    /* --------------------------------------------------------
+       Cave count / spacing. Was a hard-coded `2 + floor(rng()*3)` (2..4) with
+       an 8-unit separation test in caves-data.js. Fewer but BIGGER caves:
+       every extra cave is another rock shell that can interpenetrate a
+       neighbour's — topology branches (bridge galleries, shafts, junction
+       arms) extend a cave AFTER the placement separation check, so they reach
+       further than the check accounted for, and the final overlap pass then
+       silently DROPS one of the two. Cutting the count and widening the
+       spacing means fewer shells competing for the same flank, so fewer
+       late drops and far less chance of two shells meshing through each other.
+       CAVE_MIN_NAV_HW rises with it (1.3 -> 1.8): the caves that remain are
+       properly roomy rather than belly-crawl width.
+       -------------------------------------------------------- */
+    CAVE_COUNT_MIN: 2,
+    CAVE_COUNT_MAX: 3,
+    CAVE_SEPARATION: 14,
     PLAYER_ACCEL: 75,
     PLAYER_FRICTION: 12,
     PLAYER_MAX_SPEED: 8.0,
@@ -221,6 +243,11 @@ export const CONFIG = {
     // update rate instead of the full 180 FPS ceiling — no point simulating a
     // world nobody is looking at.
     IDLE_UPDATE_FPS: 8,
+    // Frame-rate ceiling for the live game loop (game.js animate()). Was an
+    // unnamed 1000/180 — i.e. effectively uncapped, since rAF is already
+    // vsync-bound. Capping at 60 stops a high-refresh display from paying full
+    // simulation + render cost 2-4x per displayed frame for no visible gain.
+    MAX_FPS: 60,
 
     // Shadow frustum half-extent, in world units, RECENTERED ON THE PLAYER
     // every frame (see engine.js's updateSunFollow) rather than fixed at the
@@ -257,8 +284,38 @@ export const CONFIG = {
     FPS_SAMPLE_FRAMES: 60,
     FPS_DOWN_THRESHOLD: 35,
     FPS_DOWN_FRAMES: 60,
-    FPS_UP_THRESHOLD: 52,
+    /* Promotion threshold, as a frame rate. Deliberately close to MAX_FPS.
+
+       The tier ladder moves the pixel ratio (1 / 1.5 / 2), so fill cost between
+       neighbouring tiers differs by ~1.78x. With the old 52 threshold, a device
+       managing ~30 FPS on 'high' scored ~53 on 'medium' — over the line — so it
+       promoted, dropped straight back under FPS_DOWN_THRESHOLD, demoted, and
+       repeated. Replaying the stepper against that device model: 259 tier
+       changes in ten minutes, one every ~3.3 s, each resizing the shadow map
+       and reallocating all twenty composer render targets. That is a recurring
+       multi-hundred-millisecond freeze produced entirely by the thing meant to
+       prevent them.
+
+       Asking for ~95% of the cap instead means "promote only from a tier that
+       is comfortably holding the frame rate", not "from one that is barely
+       clearing the midpoint". */
+    FPS_UP_THRESHOLD: 57,
     FPS_UP_FRAMES: 120,
+    /* Two dampers on top of the threshold, because a frame CAP hides headroom:
+       a device pinned at MAX_FPS on 'medium' reads exactly the same as one with
+       room to spare, so FPS alone cannot answer "could this device hold the
+       next tier up?" and the stepper has to learn from being wrong.
+
+       FPS_UP_BACKOFF multiplies the sustained-good-frames requirement after
+       every demotion (capped at FPS_UP_BACKOFF_MAX x FPS_UP_FRAMES), so repeat
+       offenders are re-tried ever more rarely. TIER_DEMOTION_LOCK stops the
+       retrying entirely: after this many demotions out of a tier, the auto
+       stepper never promotes back into it for the rest of the session, which
+       is what makes the loop provably converge rather than merely slow down.
+       A manual ?quality= override still ignores all of this. */
+    FPS_UP_BACKOFF: 4,
+    FPS_UP_BACKOFF_MAX: 16,
+    TIER_DEMOTION_LOCK: 2,
 
     // Security
     PRIVATE_SALT: 'c4ptch4-v0x3l-r3w0rk-2026-salt',
@@ -343,7 +400,18 @@ export const CONFIG = {
     // shadow-casters don't pop in mid-sprint. Reaches RADIUS_MAX at
     // SPEED_REF (world units/s, matches PLAYER_MAX_SPEED) and eases back
     // down at low speed.
-    SHADOW_FOLLOW_RADIUS_MAX: 70,
+    // 70 was self-defeating: the arena half-extent is 50, so a 70-unit half
+    // extent is a 140x140 frustum that wholly CONTAINS the 100x100 world.
+    // At PLAYER_MAX_SPEED the follow frustum therefore stopped following
+    // anything and simply re-admitted every shadow caster in the game to the
+    // depth pass — precisely the "virtually every shadow-casting object was
+    // being resubmitted every frame" state that SHADOW_FOLLOW_RADIUS (45,
+    // above) exists to prevent, re-entered exactly while the player moves.
+    // It also coarsened the shadow texel grid by the same factor mid-sprint.
+    // 54 keeps item 34's anti-pop headroom (a caster still enters the frustum
+    // ~1.1s before it can reach the player at top speed) without ever growing
+    // the pass back to whole-world scale.
+    SHADOW_FOLLOW_RADIUS_MAX: 54,
     SHADOW_FOLLOW_SPEED_REF: 8.0,
     // item 39: extra PCFSoft shadow.radius blended in under heavy fog/
     // overcast (softens contrast instead of only tinting the fog itself).
@@ -353,6 +421,36 @@ export const CONFIG = {
     // ?quality=/?photo handling), never reached by the automatic FPS
     // stepper, matching gpu-detect.js's "only act on high-confidence
     // signals" stance (it can confirm a WEAK device, not a strong one).
+    // Radius (world units) inside which detail flora actually gets its
+    // per-frame wind sway recomputed. Beyond it the sway is under a pixel of
+    // screen motion (see the derivation in atmosphere.js), so instances are
+    // parked at their rest pose instead of paying a trig + matrix compose +
+    // buffer write every frame. 9999 restores "sway the whole world".
+    WIND_SWAY_RADIUS: 40,
+
+    // three/addons Water's mirror pass re-renders the WHOLE scene into its
+    // reflection target. Render it every Nth frame instead of every frame (see
+    // the long note at terrain.js's onBeforeRender wrapper). 1 restores the
+    // original every-frame behaviour; 2 halves the cost for a reflection that
+    // is already distorted by the normal map and blended at alpha 0.84.
+    WATER_MIRROR_FRAME_SKIP: 2,
+
+    /* How many cave point lights the scene ever contains.
+
+       three.js compiles the VISIBLE light count into every material's shader
+       (numPointLights is a #define), so a light appearing or disappearing
+       relinks the entire scene. Cave lights used to be toggled per distance
+       band, which measured 5 -> 8 -> 12 visible lights walking to a cave and
+       back, at +15 and +14 program links — a stall at every entrance.
+
+       Cave lights now run through a pool of exactly this many always-visible
+       PointLights (caves.js buildCaveLightPool), so the count never changes and
+       nothing ever relinks. It doubles as the per-pixel lighting cost ceiling,
+       which the old per-band scheme lacked entirely. Fixed for the session and
+       deliberately NOT derived from the quality tier: resizing it on a tier
+       change would reintroduce exactly the relink it exists to prevent. */
+    CAVE_LIGHT_POOL: 6,
+
     SHADOW_MAP_ULTRA: 4096,
     PIXEL_RATIO_ULTRA: 3,
     // item 379: emergency resolution-scale lever below PIXEL_RATIO_LOW for
@@ -360,6 +458,33 @@ export const CONFIG = {
     // down to). Floored so it degrades gracefully instead of unboundedly.
     PIXEL_RATIO_FLOOR: 0.6,
     PIXEL_RATIO_STEP: 0.85,
+
+    /* Hard ceiling on the renderer's backing-store pixel count.
+
+       The per-tier PIXEL_RATIO_* caps above bound the pixel RATIO but not the
+       resulting pixel COUNT, and the post-processing chain's GPU cost is
+       driven by the count. Measured against the live composer, the chain
+       allocates ~57 bytes per canvas pixel: the ping-pong pair plus
+       OutlinePass's depth and mask buffers are all full-resolution, all RGBA
+       (HalfFloat except the mask), and every one of the twenty targets --
+       including all eleven UnrealBloomPass mips -- also carries a depth
+       buffer.
+
+       So on any HiDPI display, where devicePixelRatio is 2 and the 'high'
+       tier's cap of 2 does not bite at all, the render targets alone want:
+
+           1920x1080 @dpr2 -> 3840x2160  ->  ~0.47 GB
+           2560x1440 @dpr2 -> 5120x2880  ->  ~0.86 GB
+           3840x2160 @dpr2 -> 7680x4320  ->  ~1.9  GB
+
+       which exhausts the GPU memory a browser will hand a single tab and
+       takes the context (and usually the tab) with it. Capping the COUNT
+       bounds that at ~0.21 GB regardless of window size or dpr; the frame is
+       then rendered at up to 2560x1440 and scaled to the display, which is
+       ordinary render-scaling and what every native game does.
+
+       0 disables the cap and restores pure dpr-driven sizing. */
+    MAX_BACKBUFFER_PIXELS: 2560 * 1440,
 
     // item 355/371: hysteresis band (fraction of the base radius) around
     // each CREATURE_LOD threshold so anim/shadow/simple state doesn't
@@ -527,7 +652,87 @@ export const CONFIG = {
     GOLEM_STOMP_SHAKE_MAG: 0.02,
     GOLEM_STOMP_SHAKE_TIME: 0.28,
     GOLEM_STOMP_SHAKE_FREQ: 17,        // rad/s — well below camera-shake.js's 53 default: reads as a heavy thud, not a rattle
-    GOLEM_STOMP_RANGE: 30,
+    // 30 was far too wide to be a "a heavy thing landed right next to me" cue:
+    // it is nearly a third of the 100-unit arena, so at any moment several
+    // golems were inside it, each re-triggering every 0.4-0.6s against a 0.28s
+    // shake — the screen never got back to rest. 14 (plus the quadratic
+    // falloff in creatures/behavior.js and camera-shake.js's MIN_SHAKE_MAG
+    // floor) means only a golem within ~11 units moves the camera at all.
+    GOLEM_STOMP_RANGE: 14,
+    // Hard ceiling on golem-plan creatures in a world. Golems are the only
+    // species whose FOOTSTEPS drive the screen-shake bus (item 477), and they
+    // do it continuously — a stomp every 0.4-0.6s each, for as long as one is
+    // near you. Six species carry plan:'golem' (stone/moss/elder/magma/crystal
+    // plus the cave-only slumberTroll) and they reach the world through
+    // several independent paths, so a seed could easily field a dozen; the
+    // measured worst case was 14, which is why the shake never let up.
+    // 4 keeps golems a real presence in the bestiary while bounding how many
+    // can stomp at once — the per-trigger fixes (quadratic distance falloff,
+    // GOLEM_STOMP_RANGE 14, camera-shake.js's MIN_SHAKE_MAG floor and its
+    // decay-aware accumulator) do the rest, and with a 14-unit range it is
+    // rare for more than one of four to be in range at a time.
+    // See creatures/spawn.js capGolems().
+    MAX_GOLEMS_PER_WORLD: 4,
+
+    /* --------------------------------------------------------
+       Cave/water separation.
+
+       Rule: a cave never intrudes on the water network at all — that is
+       already enforced for every ordinary cave by caves-data.js's
+       footprintHitsWater()/caveHitsRiver(), which reject any node whose rock
+       footprint reaches a river, pond or basin. The ONE deliberate exception
+       is the Phase 2f under-river crossing, and it used to burrow barely
+       beneath the surface: floorY -2.45 with a 2.3-high vault put its ceiling
+       at y = -0.15, fifteen centimetres under the water line and only ~0.7
+       below the riverbed. Where it crosses, it must instead run FAR below.
+
+       CLEARANCE is the minimum thickness of solid rock between the water line
+       (POND_WATER_LEVEL) and the top of the tunnel vault, held across the
+       river's full width INCLUDING its banks — not just the wet channel.
+
+       MAX_SLOPE bounds the approach ramps that reach that depth, as rise over
+       run. The crossing is walkable passage, so a ramp step must never exceed
+       PLAYER_LEDGE_DROP or player.js drops the player into free-fall on every
+       step (see the note there): at the 1.2-unit node spacing caves-shapes.js
+       uses, 0.62 gives a 0.74-unit step, comfortably inside the 1.3 budget.
+       The ramp length needed to reach CLEARANCE is derived from these two, so
+       raising CLEARANCE lengthens the tunnel rather than steepening it.
+       -------------------------------------------------------- */
+    CAVE_UNDER_WATER_CLEARANCE: 4.0,
+    CAVE_UNDER_WATER_MAX_SLOPE: 0.62,
+
+    // Lowest y a cave floor may reach. This is NOT a free parameter: terrain.js's
+    // column builder floors every voxel stack at -2.0, so ~-1.5 is the lowest
+    // top face it can still render — a cave floor below that would be standing
+    // room over nothing. caves-data.js clamps to this, and caves-shapes.js
+    // checks it before committing to an under-water crossing.
+    //
+    // It is deliberately ONE named knob rather than the two magic numbers it
+    // replaced, because the pending two-layer/overburden pass has to lower both
+    // together (column floor AND this) to allow genuinely deep tunnels. Until
+    // that lands, CAVE_UNDER_WATER_CLEARANCE (4.0) cannot be met by any legal
+    // floor, so no under-water crossing is generated at all — which is exactly
+    // the desired behaviour: a cave may not pass under water shallowly.
+    CAVE_FLOOR_MIN: -1.5,
+
+    /* --------------------------------------------------------
+       How far OUTWARD of the collision surface each cave-shell rock voxel's
+       CENTRE is placed (caves.js crossSection). The shell is built from
+       jittered, freely-yawed cubes whose worst-case lateral half-extent is
+       half * sqrt(2) + jitter ~= 1.0 world units.
+
+       LATERAL: the camera may reach hw - PLAYER_RADIUS. A wall voxel centred at
+       hw + inset has its inner face at hw + inset - reach, so keeping the camera
+       outside the rock needs
+           inset >= reach - PLAYER_RADIUS = 1.0 - 0.4 = 0.60.
+       VERTICAL: the head clamp is ceiling - 0.25 and a vault voxel's vertical
+       reach (no sqrt(2) term, pure half-extent + jitter) is ~0.76, so at the
+       crown it needs inset >= 0.76 - 0.25 = 0.51.
+
+       0.65 clears both with margin, and widens the visible passage by less than
+       one voxel. 0 restores the old centre-on-surface placement.
+       -------------------------------------------------------- */
+    CAVE_SHELL_INSET: 0.65,
 
     // item 478: splash-ring size multiplier ceiling — a capture ball settling
     // into water sizes its ripple by the CAUGHT creature's tier (a stand-in

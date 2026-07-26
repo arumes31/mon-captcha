@@ -195,7 +195,7 @@ function startEnsemble(moodId, slotGain) {
     const ctx = state.audio;
     const mood = MOODS[moodId] || MOODS.meadow;
     const nodes = [];   // stoppable sources
-    const timers = [];
+    const timers = [];  // one cancel() closure per melodic-event chain
     const t0 = ctx.currentTime;
 
     // --- pad chord ---
@@ -247,11 +247,19 @@ function startEnsemble(moodId, slotGain) {
     // --- sparse melodic events ---
     let dead = false;
     for (const ev of mood.events) {
+        /* One chain per event, and a chain has at most ONE outstanding timeout
+           at a time — the successor is armed from inside the callback. So the
+           id belongs in a slot the next schedule() overwrites, not in an array.
+           Appending instead grew `timers` by one already-fired id per note for
+           as long as the mood played (a mood that runs an hour at ~1 note/3s
+           left ~1200 dead ids per event stream behind, and made stop() walk
+           every one of them). */
+        let timerId = null;
+        timers.push(() => { if (timerId !== null) clearTimeout(timerId); });
         const schedule = () => {
             if (dead) return;
             const wait = (ev.rate[0] + Math.random() * (ev.rate[1] - ev.rate[0])) * 1000;
-            const id = setTimeout(() => { playEvent(ev); schedule(); }, wait);
-            timers.push(id);
+            timerId = setTimeout(() => { timerId = null; playEvent(ev); schedule(); }, wait);
         };
         const playEvent = (spec) => {
             if (dead || M.stopped || !M.active) return;
@@ -284,7 +292,7 @@ function startEnsemble(moodId, slotGain) {
     return {
         stop(fade) {
             dead = true;
-            for (const id of timers) clearTimeout(id);
+            for (const cancel of timers) cancel();
             const stopAt = ctx.currentTime + fade + 0.3;
             for (const n of nodes) { try { n.stop(stopAt); } catch (e) {} }
         },

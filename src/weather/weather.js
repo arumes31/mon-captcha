@@ -271,6 +271,20 @@ export function forceWeather(name) {
     W.cur = name; W.nxt = name; W.t = 1; W.forced = true;
     return true;
 }
+/* ------------------------------------------------------------
+   Allocation-free reads of the three fields the PER-FRAME callers actually
+   want. weatherState() below is a ?probe/debug accessor: it builds a fresh
+   object, calls dayNightDebug() (another object) and runs five toFixed()
+   string allocations. lava.js and mountain/mountain.js were calling it five
+   times per frame between them purely to compare `cur`/`next` against a
+   string, so every frame threw away ~12 short-lived objects for nothing —
+   steady GC pressure, which surfaces as periodic frame hitches rather than a
+   lower average. weatherState() itself is unchanged for the probe API.
+   ------------------------------------------------------------ */
+export function weatherCur() { return W.cur; }
+export function weatherNext() { return W.nxt; }
+export function weatherBlend() { return W.t; }
+
 export function weatherState() {
     return {
         cur: W.cur, next: W.nxt, t: +W.t.toFixed(3), forced: W.forced, wind: +(state.weatherWind || 0).toFixed(2),

@@ -118,7 +118,96 @@ export function buildCaves() {
     // rec.lights layer, so the initial cull pass below sizes them correctly.
     buildCaveAtmos();
     buildCaveLight();
+    buildCaveLightPool();
     updateCaves(0, 0); // set initial bands so caves away from spawn start culled
+}
+
+/* ------------------------------------------------------------
+   Cave point lights run through a FIXED-SIZE POOL.
+
+   three.js bakes the NUMBER OF VISIBLE LIGHTS of each type into the shader
+   program cache key (numPointLights becomes a #define). Toggling any light's
+   .visible therefore invalidates EVERY material in the scene and relinks it —
+   a synchronous, driver-side stall.
+
+   The old scheme toggled cave lights per distance band, which did exactly that
+   at every band crossing. Measured by walking to a cave and back (seed 4242):
+   visible point lights went 5 -> 8 -> 12, costing +15 then +14 program links.
+   That is a freeze at every cave entrance, which is precisely where it was
+   reported.
+
+   A pool of constant size never changes the cache key, so nothing ever relinks.
+   It also CAPS the per-pixel lighting cost, which the old scheme did not — it
+   peaked at 12 simultaneous point lights. Each frame the nearest sources win
+   the slots; unused slots idle at intensity 0 (still visible, so the count
+   holds). Pool size is fixed for the session and deliberately NOT tier-derived:
+   a tier change that resized it would relink everything, which is the bug.
+   ------------------------------------------------------------ */
+const _caveLightSources = [];   // every cave light, as plain data (not in scene)
+const _caveLightPool = [];      // the only cave PointLights the scene ever sees
+
+function buildCaveLightPool() {
+    _caveLightSources.length = 0;
+    _caveLightPool.length = 0;
+    for (const rec of state.caveRender) {
+        for (const L of rec.lights) {
+            const l = L.light;
+            // Pull the real light out of the scene: an object that is never in
+            // the scene contributes nothing to the light count, permanently.
+            if (state.scene) state.scene.remove(l);
+            _caveLightSources.push({
+                x: l.position.x, y: l.position.y, z: l.position.z,
+                color: l.color.getHex(), distance: l.distance, decay: l.decay,
+                base: L.base, flick: L.flick, rec,
+            });
+        }
+        rec.lights.length = 0; // the culler no longer drives these directly
+    }
+    const n = Math.min(CONFIG.CAVE_LIGHT_POOL, _caveLightSources.length);
+    for (let i = 0; i < n; i++) {
+        const p = new THREE.PointLight(0xffffff, 0, 10, 2);
+        p.castShadow = false;
+        p.visible = true;             // permanently — this is the whole point
+        if (state.scene) state.scene.add(p);
+        _caveLightPool.push(p);
+    }
+    state.caveLightPool = _caveLightPool; // ?probe visibility
+}
+
+/* Assign the nearest live sources to the pool slots. Called once per frame from
+   updateCaves, after the band pass has decided which caves are active. */
+function driveCaveLightPool(elapsed) {
+    if (!_caveLightPool.length) return 0;
+    const cam = state.camera && state.camera.position;
+    let lit = 0;
+    for (let i = 0; i < _caveLightSources.length; i++) {
+        const s = _caveLightSources[i];
+        const band = s.rec.band;
+        // same LOD the per-cave toggle used: dark when far, dimmer in the mid band
+        s._w = band === 'far' ? -1
+            : (cam ? -((cam.x - s.x) ** 2 + (cam.y - s.y) ** 2 + (cam.z - s.z) ** 2) : 0);
+        s._dim = band === 'mid' ? 0.6 : 1;
+    }
+    // partial selection: K is small, so a linear scan per slot beats a sort
+    const taken = new Set();
+    for (let k = 0; k < _caveLightPool.length; k++) {
+        let best = -1, bestW = -Infinity;
+        for (let i = 0; i < _caveLightSources.length; i++) {
+            if (taken.has(i) || _caveLightSources[i]._w < 0) continue;
+            if (_caveLightSources[i]._w > bestW) { bestW = _caveLightSources[i]._w; best = i; }
+        }
+        const p = _caveLightPool[k];
+        if (best < 0) { p.intensity = 0; continue; } // idle slot, still visible
+        taken.add(best);
+        const s = _caveLightSources[best];
+        p.position.set(s.x, s.y, s.z);
+        p.color.setHex(s.color);
+        p.distance = s.distance;
+        p.decay = s.decay;
+        p.intensity = s.base * s._dim * (0.86 + 0.14 * Math.sin(elapsed * s.flick + k));
+        lit++;
+    }
+    return lit;
 }
 
 // Per-cave cull/LOD record: a proximity centre + radius, the current band, and
@@ -204,22 +293,48 @@ function crossSection(cx, cz, nx, nz, floorY, hw, ceilH, dayK, rock, rng, capped
         return;
     }
     const sh = ceilH * 0.42; // springline — vertical walls below, vault above
-    // vertical lower walls at ±hw
+    /* SEE-THROUGH-WALLS FIX. The rock surface the player collides with is the
+       lateral half-width `hw` (heightfield.js caveConfine) and the vault curve
+       (caveCeilingAt). This code used to put each shell voxel's CENTRE exactly
+       on those surfaces — so half of every rock cube stuck out into the walkable
+       space, and the collision limits sat INSIDE the geometry.
+
+       Measured: pushShell scales a VOXEL_SIZE (0.85) cube by
+       oversize * (0.85 + rng()*0.45), giving a half-extent of 0.41-0.63; the
+       free `ry: rng()*PI` yaw swings the lateral half-extent up to half*sqrt(2)
+       = 0.89, and the position jitter adds another 0.11 inward. caveConfine
+       lets the camera reach hw - PLAYER_RADIUS (0.4) while the wall's inner
+       face sat at roughly hw - 0.49 (worst case hw - 1.05) — so hugging a wall
+       put the camera inside the cube, and with backface culling the wall simply
+       vanished and the outdoors showed through. Vertically it was worse: the
+       head clamp is ceiling - 0.25 but vault voxels reached ceiling - 0.76.
+
+       Offsetting the centres OUTWARD along the local surface normal by
+       CAVE_SHELL_INSET puts the rock's inner FACE on the collision surface
+       instead of its centre. The passage now looks exactly as wide as it
+       actually is, instead of looking narrower than it is while being
+       see-through. */
+    const inset = CONFIG.CAVE_SHELL_INSET;
+    // vertical lower walls at ±hw — normal is purely lateral
     for (const side of [-1, 1]) {
-        const wx = cx + nx * side * hw, wz = cz + nz * side * hw;
+        const wlat = hw + inset;
+        const wx = cx + nx * side * wlat, wz = cz + nz * side * wlat;
         for (let y = floorY + V * 0.5; y <= floorY + sh; y += V) pushShell(rock, wx, y, wz, floorY, dayK, rng, 1.14);
     }
-    // irregular vaulted ceiling from one springtop, over the peak, to the other
+    // irregular vaulted ceiling from one springtop, over the peak, to the other.
+    // The arch is parameterised by th, so (cos th, sin th) IS the outward radial
+    // direction — offset along it to lift the ring clear of the head clamp.
     const steps = Math.max(6, Math.round((Math.PI * hw) / (V * 0.7)));
     for (let s = 0; s <= steps; s++) {
         const th = (s / steps) * Math.PI;
-        const lat = Math.cos(th) * hw;
-        const y = floorY + sh + (ceilH - sh) * Math.sin(th);
+        const lat = Math.cos(th) * (hw + inset);
+        const y = floorY + sh + (ceilH - sh) * Math.sin(th) + Math.sin(th) * inset;
         pushShell(rock, cx + nx * lat, y, cz + nz * lat, floorY, dayK, rng, 1.16);
     }
-    if (capped) { // fill a dead-end pocket wall
+    if (capped) { // fill a dead-end pocket wall — the cap faces ALONG the tunnel,
+        // so it is offset by the caller (see buildTube); only its top follows the arch.
         for (let lat = -hw; lat <= hw; lat += V) {
-            const top = floorY + sh + (ceilH - sh) * Math.sqrt(Math.max(0, 1 - (lat / hw) ** 2));
+            const top = floorY + sh + (ceilH - sh) * Math.sqrt(Math.max(0, 1 - (lat / hw) ** 2)) + inset;
             for (let y = floorY + V * 0.5; y <= top; y += V) pushShell(rock, cx + nx * lat, y, cz + nz * lat, floorY, dayK, rng, 1.14);
         }
     }
@@ -534,14 +649,9 @@ export function updateCaves(dt, elapsed) {
         if (rec.pool) rec.pool.visible = visible;
         if (rec.aux) for (let a = 0; a < rec.aux.length; a++) rec.aux[a].visible = visible; // water sheets
 
-        for (let i = 0; i < rec.lights.length; i++) {
-            const L = rec.lights[i];
-            totalLights++;
-            if (!visible) { L.light.visible = false; continue; }
-            L.light.visible = true; litLights++;
-            const dim = b === 'mid' ? 0.6 : 1; // LOD: dimmer in the mid band
-            L.light.intensity = L.base * dim * (0.86 + 0.14 * Math.sin(elapsed * L.flick + i));
-        }
+        // Cave lights are NOT toggled here any more — see buildCaveLightPool().
+        // Flipping .visible per band relinked every shader in the scene, which
+        // is what made cave entrances stall. The pool is driven once, below.
         if (visible && rec.desc && rec.desc.update) {
             try { rec.desc.update({ cave: rec.cave, ci: rec.ci, band: b, dt, elapsed, near: b === 'near', mid: b === 'mid' }); } catch (e) {}
         }
@@ -585,7 +695,11 @@ export function updateCaves(dt, elapsed) {
         }
     }
 
-    state.caveCullStats = { active, near: nNear, mid: nMid, far: nFar, litLights, totalLights, activeGlow, totalGlow };
+    // One pool pass for the whole world, after every band is settled.
+    litLights = driveCaveLightPool(elapsed);
+    totalLights = _caveLightSources.length;
+
+    state.caveCullStats = { active, near: nNear, mid: nMid, far: nFar, litLights, totalLights, activeGlow, totalGlow, poolSize: _caveLightPool.length };
 }
 
 /* ------------------------------------------------------------
@@ -616,5 +730,12 @@ export function disposeCaves() {
         }
         state.caveRender = null;
     }
+    // The pooled lights are the only cave lights actually in the scene
+    // (buildCaveLightPool removed the per-cave originals at build time), so
+    // they are what teardown has to drop.
+    for (const p of _caveLightPool) { if (state.scene) state.scene.remove(p); }
+    _caveLightPool.length = 0;
+    _caveLightSources.length = 0;
+    state.caveLightPool = null;
     state.caveCullStats = null;
 }

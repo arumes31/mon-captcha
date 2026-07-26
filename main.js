@@ -41,6 +41,7 @@ import { state } from './src/state.js';
 import { init, destroy } from './src/game.js';
 import { CONFIG } from './src/config.js';
 import { captureSeedThumbnail } from './src/ui.js';
+import { initEmbed, isEmbedded } from './src/embed.js';
 
 /* ============================================================
    Public API Expose
@@ -55,11 +56,17 @@ const publicAPI = {
     getQualityLevel: () => state.qualityLevel,
     getWorldSeed: () => CONFIG.WORLD_SEED, // item 395: the exact number a ?seed=N link reproduces
     getSeedThumbnail: (maxDim) => captureSeedThumbnail(maxDim), // item 399: foundation-only capture primitive
+    isEmbedded,                                    // running inside a host site's widget frame
 };
 
 if (typeof window !== 'undefined') {
     window.__captcha = publicAPI;
-    
+
+    // Cross-origin widget bridge. Starts BEFORE init() so the 'ready' handshake
+    // is already in flight while the world builds — the host widget can show a
+    // spinner instead of a blank frame. No-op unless ?embed=1 inside a frame.
+    initEmbed();
+
     // Auto-init if script loaded
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => init());

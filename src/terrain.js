@@ -16,7 +16,7 @@ import { buildMountainFeatures } from './mountain/mountain.js';
 import { buildLava, ensureLavaCourse, lavaAt, inLavaFootprint } from './lava.js';
 import { buildCaves } from './caves/caves.js';
 import { buildChunkedInstances, primeOcclusion } from './culling.js';
-import { weatherState } from './weather/weather.js';
+import { weatherCur, weatherNext, weatherBlend } from './weather/weather.js';
 import { spawnWaterRipple } from './particles.js';
 
 // Snow line per mountain (set from each massif's actual peak height in
@@ -623,11 +623,48 @@ function buildWaterExtras(half) {
         // itself (reflectionSample stays black, so grazing angles read as dark
         // deep water) — a fair trade at the tier that already drops the whole
         // post chain.
+        //
+        // PERF (framedrop pass): 'high' is the DEFAULT tier for anyone whose
+        // GPU is not detected as a software rasterizer — i.e. almost every
+        // real player — so the "doubles draw calls" cost above was being paid
+        // on essentially every frame of a normal session. The mirror plane is
+        // ARENA_SIZE+2 across, so its bounding sphere is in frustum from
+        // basically anywhere in the arena; there is no viewpoint that opts out.
+        // Two things fixed here, neither of which changes what the tier looks
+        // like in motion:
+        //
+        //  1. AT MOST ONCE PER GAME FRAME. This hook fires from every
+        //     renderer.render() that walks the scene and reaches the water
+        //     mesh — EffectComposer's RenderPass, and (whenever a creature is
+        //     hovered) OutlinePass's depth-mask and prepare-mask passes, which
+        //     each render the FULL scene again. So a frame could pay for THREE
+        //     complete mirror re-renders of the world, and it did so only
+        //     while the crosshair happened to rest on a creature: the cost
+        //     switched on and off as the player swept the view around, which
+        //     is what "framedrops when moving" felt like. Keying off
+        //     state.frameId (game.js) collapses that to one, deterministically.
+        //     The redundant nested SHADOW pass those renders also triggered is
+        //     handled globally now — see engine.js createRenderer.
+        //
+        //  2. MIRROR CADENCE. The reflected image is a 512px target sampled
+        //     through the normal-map distortion at alpha 0.84 — it does not
+        //     need a fresh full scene render every single frame. Rendering it
+        //     every WATER_MIRROR_FRAME_SKIP-th frame halves the remaining
+        //     cost; on the frames in between we publish `eye` exactly like the
+        //     sub-'high' branch does, so the Fresnel/specular term stays
+        //     correct and only the (already heavily distorted) reflection
+        //     image is one frame stale.
         const waterOwnHook = state.water.onBeforeRender;
+        let lastMirrorFrame = -1;
         state.water.onBeforeRender = function (renderer, scene, camera, ...rest) {
             updateWaterExtras(camera);
             const q = state.qualityLevel;
-            if (q === 'high' || q === 'ultra') {
+            const fid = state.frameId;
+            const wantMirror = (q === 'high' || q === 'ultra')
+                && fid !== lastMirrorFrame
+                && (fid % CONFIG.WATER_MIRROR_FRAME_SKIP) === 0;
+            if (wantMirror) {
+                lastMirrorFrame = fid;
                 waterOwnHook.call(this, renderer, scene, camera, ...rest);
             } else {
                 this.material.uniforms['eye'].value.setFromMatrixPosition(camera.matrixWorld);
@@ -711,8 +748,8 @@ function updateWaterExtras(camera) {
 
     // item 70: ice-over during snowfall
     if (w.iceOverlay) {
-        const ws = weatherState();
-        const cold = (ws.cur === 'snowfall' ? 1 - ws.t : 0) + (ws.next === 'snowfall' ? ws.t : 0);
+        const wb = weatherBlend();
+        const cold = (weatherCur() === 'snowfall' ? 1 - wb : 0) + (weatherNext() === 'snowfall' ? wb : 0);
         const m = w.iceOverlay.material;
         m.opacity += (cold * 0.55 - m.opacity) * Math.min(1, dt * 0.5);
     }

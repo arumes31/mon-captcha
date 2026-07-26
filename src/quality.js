@@ -74,6 +74,74 @@ let _bloomBaseStrength = 0.22;
 // item 273: clear-day fog density baseline, captured once, so "fogginess" is
 // read as a ratio rather than needing any coupling to weather.js internals.
 let _fogBaseDensity = null;
+// item 282: reused selection array for the OutlinePass (see updateQualityFx).
+const _outlineSel = [];
+// Last pixel ratio actually pushed to the renderer/composer, so a re-applied
+// tier that resolves to the same value does not rebuild render targets.
+let _lastPixelRatio = null;
+// Sustained above-threshold frames currently required to promote a tier. Grows
+// by CONFIG.FPS_UP_BACKOFF on every demotion — see CONFIG.FPS_UP_BACKOFF.
+let _promoteNeed = CONFIG.FPS_UP_FRAMES;
+// How many times the auto-stepper has fallen OUT of each tier this session.
+// At CONFIG.TIER_DEMOTION_LOCK, that tier stops being an auto-promotion target.
+let _demotions = Object.create(null);
+
+/* The pixel ratio the CURRENT tier + window size resolve to.
+
+   Two ceilings apply, and both matter. The per-tier cap bounds the RATIO,
+   which is what the tier ladder is for. CONFIG.MAX_BACKBUFFER_PIXELS bounds
+   the resulting pixel COUNT, which is what actually bounds GPU memory: the
+   post chain costs ~57 bytes per canvas pixel (see the config note), so on a
+   HiDPI display the ratio cap of 2 never binds and a large window can ask for
+   over a gigabyte of render targets — enough to lose the WebGL context and
+   the tab with it. Capping the count converts that into ordinary render
+   scaling: render at up to the budget, let the display scale it up. */
+function resolvePixelRatio() {
+    const cap = PIXEL_RATIO_CAP_BY_TIER[state.qualityLevel] || CONFIG.PIXEL_RATIO_HIGH;
+    // item 379: _resScale is 1 outside the emergency low-tier floor, so this
+    // is a no-op multiply for every normal tier/device.
+    let pr = Math.min(window.devicePixelRatio || 1, cap) * _resScale;
+
+    const el = state.renderer && state.renderer.domElement;
+    const w = (state.container && state.container.clientWidth) || (el && el.clientWidth) || 0;
+    const h = (state.container && state.container.clientHeight) || (el && el.clientHeight) || 0;
+    if (CONFIG.MAX_BACKBUFFER_PIXELS > 0 && w > 0 && h > 0) {
+        const budgeted = Math.sqrt(CONFIG.MAX_BACKBUFFER_PIXELS / (w * h));
+        // Never push BELOW the emergency floor on account of the budget alone —
+        // the tier ladder owns downscaling; this only clips the top end.
+        if (budgeted < pr) pr = Math.max(CONFIG.PIXEL_RATIO_FLOOR, budgeted);
+    }
+    return pr;
+}
+
+/* Push the resolved pixel ratio to the renderer and the composer.
+
+   Only touch it when it actually CHANGES. Both calls below reallocate GPU
+   render targets — composer.setPixelRatio() re-runs setSize() across the
+   ping-pong pair and every pass's internal targets, including
+   UnrealBloomPass's whole mip chain. applyQualityTier() is reached from
+   stepQualityUp()/stepQualityDown() on a timer whenever the measured FPS sits
+   outside the hysteresis band, INCLUDING when the tier is already at its
+   ceiling and nothing changes — so without this guard a machine comfortably
+   holding the frame cap would rebuild its entire post-processing chain every
+   FPS_UP_FRAMES frames, i.e. a periodic hitch caused purely by running well. */
+export function applyPixelRatio() {
+    if (!state.renderer) return;
+    const pr = resolvePixelRatio();
+    if (_lastPixelRatio === pr) return;
+    _lastPixelRatio = pr;
+    state.renderer.setPixelRatio(pr);
+    // PERF (framedrop pass): the composer has its OWN pixel ratio, captured
+    // from the renderer once in EffectComposer's constructor and never
+    // refreshed afterwards. Its ping-pong targets — and every pass's internal
+    // targets — are sized _width * _pixelRatio, so without this call stepping
+    // the tier down shrank ONLY the final canvas: the entire post chain, where
+    // most of the fill rate goes, kept rendering at the original (up to 2x dpr)
+    // resolution. That made the single biggest lever in the tier ladder almost
+    // a no-op, which is a large part of why a struggling device never actually
+    // recovered after the stepper dropped a tier.
+    if (state.composer) state.composer.setPixelRatio(pr);
+}
 
 function persistTier(q) {
     try { sessionStorage.setItem(SESSION_KEY, q); } catch (e) { /* private mode / storage disabled */ }
@@ -92,6 +160,12 @@ export function initQuality() {
     _qualityLocked = false;
     _resScale = 1;
     _fogBaseDensity = null;
+    // A rebuild gets a brand-new EffectComposer, so the "already applied"
+    // guard in applyPixelRatio() must not carry the previous session's value
+    // across — it would skip the one write the new composer needs.
+    _lastPixelRatio = null;
+    _promoteNeed = CONFIG.FPS_UP_FRAMES;
+    _demotions = Object.create(null);
 
     _bloomForcedOff = qsFlag('nobloom');
     const photo = qsFlag('photo');
@@ -258,12 +332,7 @@ function applyQualityTier() {
     // stuck at the wrong size for a tier that was seeded directly (skipping
     // the step machinery).
     applyShadowMapSize(SHADOW_MAP_BY_TIER[q] || CONFIG.SHADOW_MAP_HIGH);
-    if (state.renderer) {
-        const cap = PIXEL_RATIO_CAP_BY_TIER[q] || CONFIG.PIXEL_RATIO_HIGH;
-        // item 379: _resScale is 1 outside the emergency low-tier floor, so
-        // this is a no-op multiply for every normal tier/device.
-        state.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap) * _resScale);
-    }
+    applyPixelRatio();
     // Phase 4b (item 344): bind the distance-LOD radii to the tier machine —
     // low culls/simplifies sooner (always cheaper); high is generous (the
     // visreg baselines' tier, so no visual change).
@@ -335,22 +404,46 @@ function updateQualityFx(dt) {
     // item 282: keep the outline synced to whichever creature targeting.js
     // currently has hovered (state.targetHover — already CAPTURE_RANGE-gated
     // by targeting.js itself, so no distance check needed here).
+    // Reuse one array instead of allocating a fresh literal every frame. Beyond
+    // the garbage, OutlinePass only early-outs when selectedObjects is EMPTY —
+    // and when it is not, it renders the whole scene twice more. Keeping the
+    // same array and mutating its length makes the "nothing hovered" case an
+    // unambiguous, allocation-free empty.
     if (state.outlinePass) {
         const t = state.targetHover;
-        state.outlinePass.selectedObjects = (t && t.group) ? [t.group] : [];
+        if (t && t.group) { _outlineSel.length = 1; _outlineSel[0] = t.group; }
+        else _outlineSel.length = 0;
+        state.outlinePass.selectedObjects = _outlineSel;
     }
 }
 
+/* ------------------------------------------------------------
+   The auto-stepper's input. This used to ring-buffer INSTANTANEOUS
+   fps (1/dt) and average THOSE — an arithmetic mean of reciprocals,
+   which is not the frame rate. It weights fast frames far more
+   heavily than slow ones, so it systematically over-reports exactly
+   in the stuttery case the stepper exists to catch:
+
+     frames alternating 8ms and 60ms
+       mean(1/dt)         = (125 + 16.7) / 2  = 70.8  "fps"
+       true rate          = 2 frames / 0.068s = 29.4   fps
+
+   At 70.8 the reported figure sits above FPS_UP_THRESHOLD (52), so a
+   session dropping half its frames did not merely fail to step DOWN —
+   it stepped UP, adding cost to an already-hitching frame. Ring the
+   frame TIMES instead and divide count by their sum: that is the real
+   average frame rate over the window (the harmonic mean of 1/dt), and
+   one 60ms frame now drags it down as much as it actually hurts.
+   ------------------------------------------------------------ */
 export function recordFps(dt) {
     if (dt <= 0) return;
-    const fps = 1 / dt;
-    state.fpsRing[state.fpsRingIdx] = fps;
+    state.fpsRing[state.fpsRingIdx] = dt;
     state.fpsRingIdx = (state.fpsRingIdx + 1) % CONFIG.FPS_SAMPLE_FRAMES;
     if (state.fpsRingFilled < CONFIG.FPS_SAMPLE_FRAMES) state.fpsRingFilled++;
 
     let sum = 0;
     for (let i = 0; i < state.fpsRingFilled; i++) sum += state.fpsRing[i];
-    state.fps = state.fpsRingFilled ? sum / state.fpsRingFilled : 0;
+    state.fps = sum > 0 ? state.fpsRingFilled / sum : 0;
 
     // Quality check bounds limits
     if (state.fps < CONFIG.FPS_DOWN_THRESHOLD) {
@@ -360,7 +453,7 @@ export function recordFps(dt) {
     } else if (state.fps > CONFIG.FPS_UP_THRESHOLD) {
         state.highFpsFrames++;
         state.lowFpsFrames = 0;
-        if (state.highFpsFrames >= CONFIG.FPS_UP_FRAMES) stepQualityUp();
+        if (state.highFpsFrames >= _promoteNeed) stepQualityUp();
     } else {
         state.lowFpsFrames = 0;
         state.highFpsFrames = 0;
@@ -376,6 +469,7 @@ function stepQualityDown() {
     // itself (keep shadows enabled always — toggling shadowMap.enabled at
     // runtime recompiles shaders and can flash black; shrinking the map is the
     // cheap, safe lever instead).
+    const wasTier = state.qualityLevel, wasScale = _resScale;
     if (state.qualityLevel === 'high') state.qualityLevel = 'medium';
     else if (state.qualityLevel === 'medium') state.qualityLevel = 'low';
     else if (state.qualityLevel === 'low') {
@@ -384,20 +478,52 @@ function stepQualityDown() {
         // pushed to an unusably small framebuffer.
         _resScale = Math.max(CONFIG.PIXEL_RATIO_FLOOR / CONFIG.PIXEL_RATIO_LOW, _resScale * CONFIG.PIXEL_RATIO_STEP);
     }
+    // Already at the floor (tier 'low' AND the resolution scale pinned at
+    // PIXEL_RATIO_FLOOR): nothing changed, so re-running the reconcile would
+    // just resize the shadow map and rebuild the composer targets on a device
+    // that is ALREADY struggling — the worst possible moment for a hitch.
+    if (state.qualityLevel === wasTier && _resScale === wasScale) return;
+    if (state.qualityLevel !== wasTier) {
+        // Record that this tier could not hold the frame rate, and make the
+        // next promotion attempt rarer. Both feed the anti-oscillation logic
+        // documented on CONFIG.FPS_UP_BACKOFF / TIER_DEMOTION_LOCK.
+        _demotions[wasTier] = (_demotions[wasTier] || 0) + 1;
+        _promoteNeed = Math.min(_promoteNeed * CONFIG.FPS_UP_BACKOFF,
+                                CONFIG.FPS_UP_FRAMES * CONFIG.FPS_UP_BACKOFF_MAX);
+    }
     applyQualityTier();
 }
 
 function stepQualityUp() {
     state.highFpsFrames = 0;
     if (_qualityLocked) return;
+    const wasTier = state.qualityLevel, wasScale = _resScale;
     if (state.qualityLevel === 'low' && _resScale < 1) {
         // item 379: climb back out of the emergency resolution floor before
         // promoting tiers again.
         _resScale = Math.min(1, _resScale / CONFIG.PIXEL_RATIO_STEP);
-    } else if (state.qualityLevel === 'low') state.qualityLevel = 'medium';
-    else if (state.qualityLevel === 'medium') state.qualityLevel = 'high';
+    } else {
+        const target = state.qualityLevel === 'low' ? 'medium'
+            : state.qualityLevel === 'medium' ? 'high'
+            : null;
+        // A tier this session has already fallen out of TIER_DEMOTION_LOCK
+        // times does not get tried again: the device has demonstrated twice
+        // that it cannot hold it, and each further attempt costs a shadow-map
+        // resize plus a full composer reallocation to relearn the same fact.
+        // This is what bounds the demote/promote loop (see CONFIG.FPS_UP_BACKOFF).
+        if (target && (_demotions[target] || 0) < CONFIG.TIER_DEMOTION_LOCK) {
+            state.qualityLevel = target;
+        }
+    }
     // item 373: 'ultra' is manual-only — the auto-stepper's ceiling stays
     // 'high' even at sustained good FPS (see gpu-detect.js's note on only
     // acting on confirmed-strong signals, which this project doesn't have).
+    //
+    // Already at the ceiling with nothing to change: do NOT re-apply. A device
+    // holding the frame cap sits above FPS_UP_THRESHOLD forever, so this path
+    // is reached every FPS_UP_FRAMES frames for the rest of the session, and
+    // applyQualityTier() resizes the shadow map and reconciles the whole
+    // composer. Reapplying an unchanged tier is pure hitch.
+    if (state.qualityLevel === wasTier && _resScale === wasScale) return;
     applyQualityTier();
 }

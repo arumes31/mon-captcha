@@ -25,6 +25,7 @@ import { playPop, playThump, playSplash, playWobbleTick, playSuccessChime, playB
 import { stopMusic } from './music.js';
 import { stopCaveAudio } from './caves/caves-audio.js';
 import { foldCapture, validateCaptureHash, generateToken } from './security.js';
+import { emitEmbedSolved } from './embed.js';
 import { showCaptureToast, updateCounterUI, showSuccessModal } from './ui.js';
 import { makeFlashSprite, removeBall } from './ball.js';
 import { caveCaptureBonus, maybeCollapse } from './caves/caves-gameplay.js';
@@ -470,6 +471,9 @@ async function triggerWin() {
             console.error('[captcha] error in solving handler callbacks', e);
         }
     }
+    // Cross-origin embed: hand the result to the host page's widget. No-op
+    // unless the page was opened with ?embed=1 inside a frame.
+    emitEmbedSolved(token);
 }
 
 /* ------------------------------------------------------------

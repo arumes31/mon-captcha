@@ -21,7 +21,7 @@ import { mulberry32 } from '../random.js';
 import { getTerrainHeight, getGroundY, getBasinLevel, getVentFloor, WATERFALL, BASIN, VENT, BORDER_FALL, MOUNTAINS } from '../heightfield.js';
 import { spawnParticleBurst, spawnWaterRipple } from '../particles.js';
 import { startWaterfallLoop, setWaterfallVolume } from '../audio.js';
-import { weatherState } from '../weather/weather.js';
+import { weatherCur, weatherNext, weatherBlend } from '../weather/weather.js';
 import { SUN_DIRECTION } from '../engine.js';
 
 /* ------------------------------------------------------------
@@ -513,8 +513,8 @@ export function updateMountainFeatures(dt, elapsed) {
     // item 76: a post-rain "wetness" accumulator — ramps up while it's raining,
     // decays slowly otherwise — widens the splash radius/rate so heavier flow
     // visibly follows recent weather instead of the falls looking constant.
-    const wRain = weatherState();
-    const isRaining = wRain.cur === 'rain' || wRain.cur === 'thunderstorm' || wRain.next === 'rain' || wRain.next === 'thunderstorm';
+    const wc = weatherCur(), wn = weatherNext();
+    const isRaining = wc === 'rain' || wc === 'thunderstorm' || wn === 'rain' || wn === 'thunderstorm';
     state.mountainWet = THREE.MathUtils.clamp((state.mountainWet || 0) + (isRaining ? dt * 0.15 : -dt * 0.04), 0, 1);
     const wetMul = 1 + state.mountainWet * 0.6;
 
@@ -585,8 +585,8 @@ export function updateMountainFeatures(dt, elapsed) {
 
     // item 122: icicles fade with how "snowfall" the blended weather reads
     if (state.icicleMesh) {
-        const ws = weatherState();
-        const cold = (ws.cur === 'snowfall' ? 1 - ws.t : 0) + (ws.next === 'snowfall' ? ws.t : 0);
+        const wb = weatherBlend();
+        const cold = (weatherCur() === 'snowfall' ? 1 - wb : 0) + (weatherNext() === 'snowfall' ? wb : 0);
         state.icicleMesh.material.opacity = Math.min(0.95, cold * 1.3);
         state.icicleMesh.visible = state.icicleMesh.material.opacity > 0.02;
     }
@@ -647,8 +647,8 @@ export function updateMountainFeatures(dt, elapsed) {
     // item 119: wind-blown snow streamers — only while snowfall/windy AND a
     // live gust is actually blowing (state.weatherWind/-Dir, set by weather.js)
     if (state.snowStreamPts && state.snowStreamData) {
-        const ws2 = weatherState();
-        const stormy = ws2.cur === 'snowfall' || ws2.next === 'snowfall' || ws2.cur === 'windy' || ws2.next === 'windy';
+        const sc = weatherCur(), sn = weatherNext();
+        const stormy = sc === 'snowfall' || sn === 'snowfall' || sc === 'windy' || sn === 'windy';
         const active = stormy && (state.weatherWind || 0) > 0.25;
         state.snowStreamPts.visible = !low && active;
         if (!low && active) {

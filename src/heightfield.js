@@ -558,6 +558,35 @@ export function getTerrainHeight(x, z) {
    do. Inside caves the same math returns the rendered cave floor,
    because those columns are built from the carved getTerrainHeight.
    ------------------------------------------------------------ */
+/* ------------------------------------------------------------
+   PERF (framedrop pass): per-column memo.
+
+   getGroundY snaps its argument to an integer voxel column (ix, iz) and every
+   subsequent line depends ONLY on that column — so two calls anywhere inside
+   the same 0.85-unit cell must return the identical number. The underlying
+   field is immutable for the life of the page: L, MOUNTAINS, PARTITION and
+   CAVES are all built by module-scope IIFEs above this point, and nothing
+   mutates them afterwards (a destroy()/init() cycle rebuilds the scene but
+   does NOT re-evaluate this module, which is exactly why the seed survives
+   one). That makes the memo exact rather than approximate.
+
+   It is worth a lot: a MISS costs five getTerrainHeight evaluations — the
+   column plus its four neighbours — and each of those runs ~9 noise octaves
+   on top of the river / basin / vent / cave carves. updatePlayer calls this
+   every frame and so does every one of the ~90 creatures, overwhelmingly for
+   columns that were already resolved on an earlier frame, so the steady-state
+   hit rate is very high. The table is one double per column: with ARENA_SIZE
+   100 and VOXEL_SIZE 0.85 that is 117x117, about 110 KB, allocated once.
+
+   Float64Array, NOT Float32Array: JS numbers are doubles, and storing them in
+   a float32 view rounds every cached height by up to ~2.3e-7 world units. That
+   is physically meaningless for a ground height, but it would mean the memo
+   returned a DIFFERENT number than the uncached path — so the change would no
+   longer be a pure refactor, and a diff-against-the-old-build check could
+   never come back clean. A few tens of KB is not worth giving that up.
+   ------------------------------------------------------------ */
+let _groundYCache = null;
+
 export function getGroundY(x, z) {
     const V = CONFIG.VOXEL_SIZE;
     const half = CONFIG.ARENA_SIZE / 2;
@@ -566,11 +595,22 @@ export function getGroundY(x, z) {
     let iz = Math.floor((z + half) / V);
     if (ix < 0) ix = 0; else if (ix >= n) ix = n - 1;
     if (iz < 0) iz = 0; else if (iz >= n) iz = n - 1;
+
+    if (_groundYCache === null) {
+        _groundYCache = new Float64Array(n * n);
+        _groundYCache.fill(NaN);                       // NaN == "not resolved yet"
+    }
+    const ci = iz * n + ix;
+    const memo = _groundYCache[ci];
+    if (memo === memo) return memo;                    // NaN-safe hit test
+
     const cx = -half + ix * V + V / 2;                 // column centre (as built)
     const cz = -half + iz * V + V / 2;
     // pond columns render sandy bowl blocks whose top face == the analytic bowl
     if (cx * cx + cz * cz < CONFIG.POND_RADIUS * CONFIG.POND_RADIUS) {
-        return getTerrainHeight(cx, cz);
+        const pondY = getTerrainHeight(cx, cz);
+        _groundYCache[ci] = pondY;
+        return pondY;
     }
     const surfaceY = getTerrainHeight(cx, cz);
     const hN = getTerrainHeight(cx, cz - V);
@@ -580,7 +620,9 @@ export function getGroundY(x, z) {
     const floorY = Math.max(-2.0, Math.min(surfaceY, hN, hS, hW, hE) - 0.45);
     const base = floorY + V / 2;                       // lowest voxel centre
     const k = Math.max(0, Math.floor((surfaceY - base) / V + 1e-6));
-    return base + k * V + V / 2;                        // top face of the top voxel
+    const topY = base + k * V + V / 2;                  // top face of the top voxel
+    _groundYCache[ci] = topY;
+    return topY;
 }
 
 /* ------------------------------------------------------------
