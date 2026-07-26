@@ -79,6 +79,28 @@ function rollWorldSeed() {
     return ((Date.now() & 0xffffffff) ^ ((Math.random() * 0xffffffff) | 0)) >>> 0;
 }
 
+/* Win threshold, in capture POINTS. The verification service authors this and
+   the widget forwards it as ?required=N (see server/verify.mjs /challenge), so
+   the HUD counter and the local win condition agree with the number /issue will
+   actually check.
+
+   Safe to take from the URL: this copy is cosmetic. The authoritative one lives
+   inside the server-signed challenge, so a client that pins ?required=1 wins
+   locally and is then refused a token with `insufficient-points`. Clamped to a
+   playable band so a typo cannot make a run unwinnable. */
+function resolveRequired(fallback) {
+    try {
+        if (typeof window !== 'undefined' && window.location) {
+            const m = /[?&]required=(\d+)/.exec(window.location.search);
+            if (m) {
+                const n = parseInt(m[1], 10);
+                if (Number.isFinite(n) && n >= 1 && n <= 60) return n;
+            }
+        }
+    } catch (e) { /* fall through */ }
+    return fallback;
+}
+
 export const CONFIG = {
     // Arena — Phase 2 grew the valley from 64 to 100 units so the twelve
     // themed zones each get real breathing room. Voxel size scaled in step
@@ -220,7 +242,7 @@ export const CONFIG = {
     BREAKOUT_PANIC_TIME: 3.5,
 
     // Creatures
-    CAPTURES_REQUIRED: 6,        // win condition: capture POINTS (common=1, rarer tiers=2)
+    CAPTURES_REQUIRED: resolveRequired(6), // win condition: capture POINTS (common=1, rarer tiers=2)
     POINTS_COMMON: 1,
     POINTS_SPECIAL: 2,           // uncommon / rare / legendary
     CREATURE_SPAWN_COUNT: 75,    // creatures alive in the arena (high/medium tier; Phase 2c fauna pass 58->75)

@@ -1,5 +1,5 @@
 /* ============================================================
-   Monster CAPTCHA — site key provisioning
+   monCAPTCHA — site key provisioning
 
    There is no signup portal and no central authority: YOU run the verification
    service, so YOU mint the keys. A "customer key" is just a pair you generate
@@ -37,11 +37,14 @@ const has = (name) => argv.includes('--' + name);
 
 if (has('help') || (!flags('origin').length && !has('force'))) {
     console.log(`
-Monster CAPTCHA — site key generator
+monCAPTCHA — site key generator
 
   --origin <url>   site allowed to use this key (repeatable, REQUIRED)
                    exact scheme://host[:port], e.g. https://customer-a.com
   --name <slug>    label folded into the site key (default: derived from origin)
+  --required <n>   capture points needed to solve (default 6, the value in
+                   src/config.js CAPTURES_REQUIRED). The server signs this into
+                   each challenge, so the client cannot lower it.
   --file <path>    merge into this keys file instead of printing
   --force          overwrite an existing entry with the same name
   --help
@@ -73,9 +76,21 @@ const name = (flags('name')[0] || (() => {
     catch (e) { return 'site'; }
 })());
 
+const requiredArg = flags('required')[0];
+let required = null;
+if (requiredArg != null) {
+    required = Number(requiredArg);
+    if (!Number.isInteger(required) || required < 1) {
+        console.error(`error: --required "${requiredArg}" must be a positive integer.`);
+        process.exit(1);
+    }
+}
+
 const sitekey = `mc_${name}_${rand(9)}`;
 const secret = `mcs_${rand(32)}`;
-const entry = { secret, origins };
+// Omitted rather than written as 6, so the server's default stays the one place
+// the fallback lives (MC_REQUIRED, else 6).
+const entry = required == null ? { secret, origins } : { secret, origins, required };
 
 const file = flags('file')[0];
 if (!file) {

@@ -1,5 +1,5 @@
 /* ============================================================
-   Monster CAPTCHA - main.js (High-Res Voxel Rework)
+   monCAPTCHA - main.js (High-Res Voxel Rework)
    ------------------------------------------------------------
    Thin ES module entry point. The engine, world, creatures and
    game loop live in ./src/*.js modules (browser-native ESM;

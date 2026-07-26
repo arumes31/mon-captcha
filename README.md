@@ -2,10 +2,10 @@
 
 <a href="https://arumes31.github.io/mon-captcha/">
   <img src="assets/logo.png" width="170" height="170"
-       alt="Monster CAPTCHA — a red cyber-wolf emblem on a circular tech badge">
+       alt="monCAPTCHA — a red cyber-wolf emblem on a circular tech badge">
 </a>
 
-# Monster CAPTCHA
+# monCAPTCHA
 
 **A first-person 3D voxel game that proves you're human by making you play, not squint at distorted text.**
 
@@ -29,7 +29,7 @@ Catch six capture-points' worth of wandering creatures in a procedurally generat
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/captcha-banner-dark.svg">
     <img src="assets/captcha-banner.svg" width="316" height="90"
-         alt="I'm not a robot — Monster CAPTCHA. Click to play the live demo.">
+         alt="I'm not a robot — monCAPTCHA. Click to play the live demo.">
   </picture>
 </a>
 

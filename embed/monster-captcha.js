@@ -1,5 +1,5 @@
 /* ============================================================
-   Monster CAPTCHA — embeddable widget
+   monCAPTCHA — embeddable widget
 
    Drop this on any site:
 
@@ -107,7 +107,7 @@
         this.label.textContent = "I'm not a robot";
 
         this.brand = el('div', 'flex:0 0 auto;text-align:center;font-size:10px;color:' + (dark ? '#8b93a1' : '#9aa0a6') + ';line-height:1.25;');
-        this.brand.appendChild(document.createTextNode('Monster'));
+        this.brand.appendChild(document.createTextNode('mon'));
         this.brand.appendChild(el('br'));
         this.brand.appendChild(document.createTextNode('CAPTCHA'));
 
@@ -179,7 +179,15 @@
         }).then(function (r) {
             return r.json().then(function (d) { return { status: r.status, data: d }; });
         }).then(function (res) {
-            if (res.status === 200 && res.data && res.data.challenge) return res.data.challenge;
+            if (res.status === 200 && res.data && res.data.challenge) {
+                // The service picks the world and the win threshold; we only
+                // carry the numbers across.
+                return {
+                    challenge: res.data.challenge,
+                    seed: res.data.seed,
+                    required: res.data.required,
+                };
+            }
             var code = (res.data && res.data.error) || 'challenge-failed';
             self.lastError = code;
             return null;
@@ -190,12 +198,15 @@
         if (this.token || this.overlay) return;
         var self = this;
         this.setState('working');
-        this.fetchChallenge().then(function (challenge) { self.openWith(challenge); });
+        this.fetchChallenge().then(function (issued) { self.openWith(issued); });
     };
 
-    Widget.prototype.openWith = function (challenge) {
+    Widget.prototype.openWith = function (issued) {
         var self = this;
         if (this.token || this.overlay) return;
+        var challenge = issued && issued.challenge ? issued.challenge : null;
+        var seed = issued ? issued.seed : null;
+        var required = issued ? issued.required : null;
         this.challenge = challenge;
 
         if (this.verify && !challenge) {
@@ -217,14 +228,21 @@
         var shell = el('div', 'position:relative;width:min(1000px,100%);height:min(680px,100%);' +
             'background:#000;border-radius:8px;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,.5);');
 
+        /* &seed= is the SERVER's choice, echoed from the /challenge response, so
+           the run happens in a world the client did not get to pick. It is not a
+           secret — the frame has to render it — and it is checked at /issue
+           against the copy inside the signed challenge, so putting it in the URL
+           gains an attacker nothing. */
         var url = ORIGIN + CHALLENGE_PATH + '?embed=1&widget=' + encodeURIComponent(this.id) +
             (this.sitekey ? '&sitekey=' + encodeURIComponent(this.sitekey) : '') +
-            (this.verify ? '&verify=' + encodeURIComponent(this.verify) : '');
+            (this.verify ? '&verify=' + encodeURIComponent(this.verify) : '') +
+            (seed == null ? '' : '&seed=' + encodeURIComponent(String(seed))) +
+            (required == null ? '' : '&required=' + encodeURIComponent(String(required)));
         // Pointer Lock is required to look around, so allow it explicitly; the
         // frame is otherwise given nothing (no top navigation, no downloads).
         var frame = el('iframe', 'width:100%;height:100%;border:0;display:block;', {
             src: url,
-            title: 'Monster CAPTCHA challenge',
+            title: 'monCAPTCHA challenge',
             allow: 'pointer-lock; fullscreen; autoplay',
             sandbox: 'allow-scripts allow-same-origin allow-pointer-lock',
         });

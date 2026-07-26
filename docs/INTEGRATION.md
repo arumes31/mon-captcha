@@ -1,13 +1,20 @@
-# Embedding Monster CAPTCHA on another site
+# Embedding monCAPTCHA on another site
 
 Two moving parts:
 
 | | what it is | where it runs |
 |---|---|---|
 | `embed/monster-captcha.js` | the widget: checkbox, modal, token plumbing | the customer's page |
-| `server/verify.mjs` | issues and checks signed tokens, polls DNS | your infrastructure |
-| `server/portal.mjs` | sign-up + self-service key/domain management | your infrastructure |
-| `server/store.mjs` | accounts, keys, domains (JSON file; swap for a DB) | your infrastructure |
+| `server/verify.mjs` | issues and checks signed tokens | your infrastructure |
+| `server/keygen.mjs` | mints site key / secret pairs into a JSON file | your workstation |
+
+> [!IMPORTANT]
+> **Not on this branch.** A self-service portal (`server/portal.mjs`) and DNS TXT domain
+> verification (`server/dnsverify.mjs`) exist only on the unmerged `test1` branch, and
+> `server/store.mjs` is present but not wired into `verify.mjs`. Keys are provisioned with
+> `keygen.mjs` and read from `MC_KEYS` / `MC_KEYS_FILE` as plaintext secrets. Earlier revisions
+> of this document described those features as shipped; they are not. Anything below marked
+> **(test1 only)** is not a control you currently have.
 
 The widget alone will run the challenge and hand you a token. **It will not tell you
 anything trustworthy.** Read [Security](#security) before you rely on it.
@@ -27,32 +34,9 @@ ever configures one URL.
 
 ## 2. Get a site key
 
-### Self-service portal (recommended)
+### keygen (the only option on this branch)
 
-```sh
-MC_STORE=server/store.json node server/portal.mjs        # -> http://localhost:8092
-```
-
-Sign up, create a key, and manage its domains from the browser. Passwords are scrypt-hashed;
-the site-key **secret is shown exactly once** at creation and rotation, because only a hash
-is kept — the plaintext is not recoverable by you or by anyone who steals the store.
-
-Point the verification service at the same store:
-
-```sh
-MC_USE_STORE=1 MC_STORE=server/store.json MC_SIGNING_KEY='a-long-stable-random-string' MC_CHALLENGE_ORIGINS='https://captcha.yourdomain.com' node server/verify.mjs
-```
-
-`MC_SIGNING_KEY` signs challenges and tokens. With the portal backend it is the *only*
-signing material, so it must be stable across restarts — regenerate it and every outstanding
-token becomes invalid.
-
-> **A new key is blocked until its domains are DNS-verified.** See
-> [Domain ownership](#domain-ownership-dns-txt) below.
-
-### CLI alternative
-
-No portal, no accounts — mint a key straight into a JSON file:
+Mint a key straight into a JSON file:
 
 ```sh
 node server/keygen.mjs --origin https://customer-a.com \
@@ -76,7 +60,18 @@ Origins must be exact `scheme://host[:port]` — no path, no trailing slash. `ke
 anything else, warns on non-HTTPS, and will not silently replace an existing key (`--force`
 to add a second for the same name). The file is written `0600`.
 
-Omit `--file` to just print the JSON for `MC_KEYS`.
+Omit `--file` to just print the JSON for `MC_KEYS`. Pass `--required N` to set that key's
+capture bar (default 6).
+
+> [!WARNING]
+> Secrets in this file are **plaintext**, and listing an origin is all it takes to issue for
+> that domain — there is no proof-of-control step on this branch. Guard the file accordingly,
+> and only add origins you actually control. The scrypt-hashed, DNS-verified variant lives on
+> `test1` (see the note at the top).
+>
+> A self-service portal (`server/portal.mjs`, `MC_USE_STORE`, `MC_SIGNING_KEY`) is also
+> **(test1 only)**. `verify.mjs` on this branch signs with each key's own secret and does not
+> import `server/store.mjs`.
 
 ## 3. Run the verification service
 
@@ -92,8 +87,11 @@ node server/verify.mjs                                   # -> :8091
 | `MC_KEYS` | inline JSON alternative; wins over `MC_KEYS_FILE` if both are set |
 | `MC_CHALLENGE_ORIGINS` | where **the challenge itself** is served from. `/issue` is called by the challenge frame, so this is what its `Origin` header carries. |
 | `MC_TTL_MS` | token lifetime (default 120000) |
-| `MC_CHALLENGE_TTL_MS` | how long a player has to finish (default 900000) |
+| `MC_CHALLENGE_TTL_MS` | how long a player has to finish (default 300000). Also the window in which one challenge is spendable — it mints exactly one token. |
 | `MC_ISSUE_PER_MIN` | per-IP cap on `/challenge` + `/issue` (default 20) |
+| `MC_SITE_PER_MIN` | per-**site-key** cap on the same endpoints (default 240). IPs are rentable; this is the bucket an attacker cannot rotate away from. |
+| `MC_TRUST_PROXY` | set to `1` **only** when a reverse proxy is in front. Read the [deployment note](#deployment-mc_trust_proxy) — wrong either way costs you the per-IP limiter or every client's real address. |
+| `MC_REQUIRED` | default capture points needed to solve (default 6). Per-key `required` wins. Keep it equal to `CONFIG.CAPTURES_REQUIRED` in `src/config.js` unless you are also passing `?required=` through. |
 
 Starting with neither `MC_KEYS` nor `MC_KEYS_FILE` uses a printed demo key and warns loudly.
 A malformed key entry is a startup failure, not a runtime surprise.
@@ -158,13 +156,17 @@ curl -X POST https://captcha.yourdomain.com:8091/siteverify \
 
 ```json
 { "success": true, "challenge_ts": "2026-07-25T20:51:39.156Z",
-  "hostname": "customer-a.com", "points": 6, "seed": "3245627019" }
+  "hostname": "customer-a.com", "points": 6, "required": 6,
+  "points_source": "client-asserted", "seed": "3245627019" }
 ```
 
-**Check `hostname` yourself** — it is the site the challenge was embedded on. `required` is the
-capture bar that key demanded and `points` is what the visitor earned; `/issue` already refuses
-to mint a token when `points < required`, so these are confirmation rather than a check you
-must repeat.
+**Check `hostname` yourself** — it is the site the challenge was embedded on.
+
+`required` is the capture bar the server set for that run, and `/issue` does refuse to mint below
+it, so you need not repeat the comparison. But read `points_source` and believe it: **`points` is
+the number the browser reported.** The server checked it against a threshold it authored, which
+stops an arbitrary score being minted into a token — it did not witness any capture. Do not treat
+`points` as a measure of effort, and do not scale trust with it.
 
 Failures come back as `{"success": false, "error-codes": [...]}`:
 
@@ -191,12 +193,41 @@ the design does buy:
 * tokens cannot be **forged or altered** without the signing secret (HMAC-SHA256)
 * tokens are **single-use**, short-lived, and bound to one site key, so they cannot be
   replayed, shared between sites, or minted in bulk and banked
-* issuance is **rate limited per IP**, so bulk minting is at least metered
-* the embedding domain is **enforced for browser traffic** and returned for you to check
+* **one `/challenge` mints exactly one token** — a caller cannot fetch a blob once and then
+  mint offline for the rest of its lifetime
+* the **world seed and the win threshold are chosen by the server** and travel inside the
+  signed challenge, so a client cannot pick a favourable world or lower its own bar
+* `points` is **checked against that threshold**, so it cannot be inflated into the token
+* issuance is **rate limited per IP and per site key**, so bulk minting is at least metered
 
-That is the ceiling for any client-side captcha. Real bot resistance needs server-authored
-challenges plus behavioural and reputation signals. **Do not make this the only control on
-anything that matters.**
+### The limits, stated plainly
+
+* **`points` is still the client's count.** Nothing server-side saw a capture. The threshold
+  check stops inflation; it is not an observation. See `points_source` above.
+* **`Origin` is a browser guarantee, not a network one.** It stops copied-key and cross-site
+  abuse from real browsers — the same guarantee reCAPTCHA/hCaptcha domain restriction gives.
+  A non-browser client sets any `Origin` it likes, so `/challenge` is reachable by script.
+* **Per-IP metering depends on `MC_TRUST_PROXY`.** Get it wrong and one request header
+  bypasses that half of the limiter — see the deployment note below.
+* **Single-use is per-process.** The nonce and rate-limit stores are in memory, so behind more
+  than one instance each replica will re-grant the same token. Back them with Redis first.
+
+That is the ceiling for any client-side captcha, and it is the same ceiling the commercial
+products sit on: Turnstile's `siteverify` returns no score and no proof either. Making the *run*
+checkable would need the server to witness each capture — a signed receipt per catch with a
+minimum interval the server derives itself — and even then the property gained is "a conforming
+client produced this transcript over N seconds of serialized wall clock", not "a human played".
+**Use this as a cost multiplier, never as the only control on anything that matters.**
+
+### Deployment: `MC_TRUST_PROXY`
+
+`X-Forwarded-For` is a request header, so any caller can set it. The per-IP limiter is the only
+real meter this service has, and it reads XFF **only** when you say a proxy is in front:
+
+| deployment | setting |
+|---|---|
+| behind nginx / Caddy / Cloudflare | `MC_TRUST_PROXY=1` (and make the proxy overwrite, not append, XFF) |
+| exposed directly | leave it unset — otherwise a rotating header mints without limit |
 
 ### The in-page token is not the token
 
@@ -211,20 +242,35 @@ when it could not.
 
 ### Capture requirement
 
-Each site key carries how many capture points a visitor must earn — set it in the portal
-(1-20; commons score 1, rarer tiers 2; default 6).
+How many capture points a visitor must earn. Commons score 1, rarer tiers 2; the default is 6,
+matching `CONFIG.CAPTURES_REQUIRED` in `src/config.js`. Set it per key in the keys file, or
+globally with `MC_REQUIRED`:
 
-The number is **signed into the challenge blob**, so the value the game is told to enforce and
-the value `/issue` enforces are the same one, and neither is client-writable:
+```json
+{ "mc_customer-a_xxx": { "secret": "mcs_…", "origins": ["https://customer-a.com"], "required": 6 } }
+```
 
-* the frame receives a copy as `?required=N` purely to render the HUD counter — editing it
-  changes what the counter says and nothing else
-* `/issue` compares submitted points against the number inside the *signed* challenge and
-  returns `insufficient-points` if it falls short, so no token is minted
-* `/siteverify` reports both `required` and `points`
+The number is **signed into the challenge blob**, so the value the game enforces locally and the
+value `/issue` enforces are the same one, and only the second matters:
 
-Changing it applies to the next challenge; tokens already issued are unaffected. Values
-outside 1-20 are clamped rather than rejected, so a key can never end up unsolvable.
+* the frame receives a copy as `?required=N`, which drives the HUD counter and the local win
+  condition. Editing it only changes when the browser *thinks* it won — `/issue` compares
+  against the number inside the *signed* challenge, so a client that pins `?required=1` wins on
+  screen and is then refused a token
+* `/issue` returns `insufficient-points` when the claim falls short, so no token is minted
+* `/siteverify` reports `required` alongside `points`
+
+Changing it applies to the next challenge; tokens already issued are unaffected. A non-integer or
+non-positive `required` is rejected at startup rather than silently coerced; the client-side copy
+is clamped to 1-60 so a bad URL cannot make a run unwinnable.
+
+### Domain ownership (DNS TXT) — **(test1 only)**
+
+> [!WARNING]
+> **Not implemented on this branch.** There is no DNS verification in `server/verify.mjs`: a key
+> issues for whatever origins you list in the keys file, immediately, with no proof of control.
+> `/challenge` never returns `domain-not-verified`. If you provision keys for domains you do not
+> control, nothing here will stop you. The design below lives on the unmerged `test1` branch.
 
 ### Domain ownership (DNS TXT)
 

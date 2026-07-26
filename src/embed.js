@@ -141,7 +141,9 @@ async function issueSignedToken() {
                 // identify the customer.
                 challenge: _challenge,
                 points: state.creaturesCaught,
-                seed: CONFIG.WORLD_SEED,
+                // No seed: the issuer authored it and reads its own copy out of
+                // the signed challenge. Sending ours would only be a claim, and
+                // it is ignored on the far side.
             }),
         });
         if (!res.ok) return null;

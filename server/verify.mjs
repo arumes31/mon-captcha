@@ -1,5 +1,5 @@
 /* ============================================================
-   Monster CAPTCHA — reference verification server
+   monCAPTCHA — reference verification server
 
    Zero dependencies (node: built-ins only). Run:
 
@@ -30,19 +30,36 @@
    -------------------------------------------
    The challenge runs entirely in the visitor's browser, so nothing here proves
    a human played it: a bot can drive the page, or call /issue directly, and get
-   a genuine signed token. What this design DOES buy you:
+   a genuine signed token. That has not changed and is not fixable from here.
+   What this design DOES buy you:
 
      * tokens cannot be forged or altered without the signing secret
      * a token is single-use, short-lived, and bound to one site key + origin,
        so it cannot be replayed, shared between sites, or banked in bulk
-     * issuance is rate limited per IP, so bulk minting is at least metered
+     * one /challenge mints exactly one token, so a caller cannot fetch a blob
+       once and then mint offline for its lifetime
+     * the world seed and the win threshold are chosen HERE and travel inside
+       the signed challenge, so the client cannot pick a favourable world or
+       lower the bar it has to clear
+     * `points` is checked against that threshold, so it cannot be inflated —
+       but it is still the client's own count, not an observed one
+     * issuance is metered per IP and per site key, so bulk minting is at least
+       rate limited (see MC_TRUST_PROXY — get that setting wrong and the per-IP
+       half is bypassed by one request header)
 
-   That is the honest ceiling for any client-side captcha. Real bot resistance
-   needs server-authored challenges plus behavioural/reputation signals. Do not
-   use this as the sole control on anything that matters.
+   What none of that adds up to: a proof that captures happened. Every check
+   above is a property of the TOKEN, plus one threshold on a number the client
+   reports. To make the run itself checkable you would need the server to
+   witness the captures — a signed receipt per catch, with a minimum interval
+   the server derives from a distance it computed — and even then the property
+   you gain is "a conforming client produced this transcript over N seconds of
+   serialized wall clock", not "a human played". Those are different theorems
+   and only the first is achievable in a browser. Price your reliance
+   accordingly: use this as a cost multiplier, never as the sole control.
 
    The in-memory nonce and rate-limit stores are single-process. Behind more
-   than one instance, back them with Redis or the equivalent.
+   than one instance, back them with Redis or the equivalent — otherwise
+   single-use is per-process and each replica re-grants the same token.
    ============================================================ */
 
 import http from 'node:http';
@@ -51,9 +68,22 @@ import fs from 'node:fs';
 
 const PORT = Number(process.env.MC_PORT || 8091);
 const TOKEN_TTL_MS = Number(process.env.MC_TTL_MS || 120000);        // 2 minutes
-const CHALLENGE_TTL_MS = Number(process.env.MC_CHALLENGE_TTL_MS || 900000); // 15 min to play
+const CHALLENGE_TTL_MS = Number(process.env.MC_CHALLENGE_TTL_MS || 300000); // 5 min to play
 const ISSUE_PER_MIN = Number(process.env.MC_ISSUE_PER_MIN || 20);
+const SITE_PER_MIN = Number(process.env.MC_SITE_PER_MIN || 240);
 const MAX_BODY = 8192;
+
+/* Win threshold. Must match CONFIG.CAPTURES_REQUIRED in src/config.js — the
+   server is the one that decides it (it travels inside the signed challenge),
+   the client only renders a counter. Per-key override: { required: N }. */
+const DEFAULT_REQUIRED = Number(process.env.MC_REQUIRED || 6);
+
+/* X-Forwarded-For is a request header: any client can set it to anything. The
+   per-IP limiter is the only real meter this service has, so XFF is honoured
+   ONLY when the operator states there is a proxy in front of us. Behind
+   nginx/Caddy/Cloudflare set MC_TRUST_PROXY=1; exposed directly, leave it off
+   or the limiter is bypassed by one header. */
+const TRUST_PROXY = /^(1|true|yes)$/i.test(process.env.MC_TRUST_PROXY || '');
 
 /* Where the CHALLENGE itself is served from. /issue is called by the challenge
    frame, so this — not the customer's site — is what its Origin header carries. */
@@ -92,7 +122,13 @@ for (const [k, cfg] of Object.entries(KEYS)) {
         console.error(`[verify] site key "${k}" is malformed: expected { secret, origins: [] }`);
         process.exit(1);
     }
+    if (cfg.required != null && !(Number.isInteger(cfg.required) && cfg.required > 0)) {
+        console.error(`[verify] site key "${k}" has a bad "required": expected a positive integer`);
+        process.exit(1);
+    }
 }
+
+const requiredFor = (cfg) => (cfg.required != null ? cfg.required : DEFAULT_REQUIRED);
 
 const b64u = (buf) => Buffer.from(buf).toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -117,23 +153,38 @@ function verifySigned(token, secret) {
     catch (e) { return { ok: false, err: 'malformed' }; }
 }
 
-/* ---- single-use nonces (replay protection) ---- */
-const used = new Map();   // nonce -> expiry ms
-/* ---- crude per-IP issuance limiter ---- */
-const buckets = new Map(); // ip -> { n, resetAt }
+/* ---- single-use nonces (replay protection) ----
+   Two namespaces share the map, prefixed so they can never collide:
+     'c:' challenge nonces, burned by /issue    — one challenge, one token
+     't:' token nonces, burned by /siteverify   — one token, one verification */
+const used = new Map();   // 'c:'|'t:' + nonce -> expiry ms
+/* ---- crude issuance limiters ---- */
+const buckets = new Map();     // ip -> { n, resetAt }
+const siteBuckets = new Map(); // sitekey -> { n, resetAt }
 
 setInterval(() => {
     const now = Date.now();
     for (const [k, exp] of used) if (exp <= now) used.delete(k);
     for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+    for (const [k, b] of siteBuckets) if (b.resetAt <= now) siteBuckets.delete(k);
 }, 30000).unref();
 
-function rateOk(ip) {
+function bump(map, key, limit) {
     const now = Date.now();
-    let b = buckets.get(ip);
-    if (!b || b.resetAt <= now) { b = { n: 0, resetAt: now + 60000 }; buckets.set(ip, b); }
+    let b = map.get(key);
+    if (!b || b.resetAt <= now) { b = { n: 0, resetAt: now + 60000 }; map.set(key, b); }
     b.n++;
-    return b.n <= ISSUE_PER_MIN;
+    return b.n <= limit;
+}
+
+/* Per-IP is spoofable the moment there is a proxy in front of us, and IPs are
+   cheap to rent regardless. The per-sitekey bucket is the one an attacker
+   cannot rotate away from: it caps a single customer's blast radius no matter
+   how many addresses the caller has. Both must pass. */
+function rateOk(ip, sitekey) {
+    const ipOk = bump(buckets, ip, ISSUE_PER_MIN);
+    const siteOk = sitekey ? bump(siteBuckets, sitekey, SITE_PER_MIN) : true;
+    return ipOk && siteOk;
 }
 
 function readBody(req) {
@@ -206,15 +257,27 @@ const server = http.createServer(async (req, res) => {
         }
 
         const ip = clientIp(req);
-        if (!rateOk(ip)) return send(res, 429, { error: 'rate-limited' }, corsForSite(origin));
+        if (!rateOk(ip, sitekey)) return send(res, 429, { error: 'rate-limited' }, corsForSite(origin));
 
         const now = Date.now();
+        const required = requiredFor(cfg);
+        /* WE choose the world, not the client.
+           src/config.js rollWorldSeed() honours ?seed=N ungated, so a client
+           left to pick its own seed can replay a recorded winning run into the
+           exact world it was recorded in — every timing and aim genuinely
+           human, because it once was. Authoring the seed here makes it a
+           server-held nonce instead, and is the prerequisite for any future
+           check that re-derives the world (a spawn table, a throw audit).
+           On its own it proves nothing; it stops the world being negotiable. */
+        const seed = crypto.randomBytes(4).readUInt32BE(0) >>> 0;
         const challenge = sign({
             t: 'c', k: sitekey, o: origin, n: b64u(crypto.randomBytes(9)),
+            seed, req: required,
             iat: now, exp: now + CHALLENGE_TTL_MS,
         }, cfg.secret);
-        return send(res, 200, { challenge, expires_in: Math.floor(CHALLENGE_TTL_MS / 1000) },
-            corsForSite(origin));
+        return send(res, 200, {
+            challenge, seed, required, expires_in: Math.floor(CHALLENGE_TTL_MS / 1000),
+        }, corsForSite(origin));
     }
 
     /* ---------------- /issue : challenge frame -> token ---------------- */
@@ -258,7 +321,27 @@ const server = http.createServer(async (req, res) => {
         }
 
         const ip = clientIp(req);
-        if (!rateOk(ip)) return send(res, 429, { error: 'rate-limited' }, corsFor(origin));
+        if (!rateOk(ip, sitekey)) return send(res, 429, { error: 'rate-limited' }, corsFor(origin));
+
+        /* One challenge, one token. Without this a single /challenge blob mints
+           tokens for its whole lifetime, so an attacker fetches one and then
+           needs no further round trip to that endpoint at all. Burned AFTER the
+           rate check so a throttled caller does not lose its challenge. */
+        const chKey = `c:${ch.payload.n}`;
+        if (!ch.payload.n || used.has(chKey)) {
+            return send(res, 403, { error: 'challenge-already-used' }, corsFor(origin));
+        }
+        used.set(chKey, ch.payload.exp);
+
+        /* The win threshold comes out of the challenge WE signed, never from the
+           request. `points` is still a client claim — nothing here witnessed the
+           captures — but it can no longer be inflated to an arbitrary score,
+           and a caller cannot lower the bar it has to clear. */
+        const required = Number(ch.payload.req) || DEFAULT_REQUIRED;
+        const points = Number(body.points) || 0;
+        if (!(points >= required)) {
+            return send(res, 403, { error: 'insufficient-points', required }, corsFor(origin));
+        }
 
         const now = Date.now();
         const token = sign({
@@ -267,8 +350,10 @@ const server = http.createServer(async (req, res) => {
             n: b64u(crypto.randomBytes(12)),
             iat: now,
             exp: now + TOKEN_TTL_MS,
-            p: Number(body.points) || 0,
-            s: body.seed == null ? null : String(body.seed).slice(0, 32),
+            p: points,
+            req: required,
+            // The seed is ours, from the signed challenge — body.seed is ignored.
+            s: ch.payload.seed == null ? null : String(ch.payload.seed),
         }, cfg.secret);
 
         return send(res, 200, { token, expires_in: Math.floor(TOKEN_TTL_MS / 1000) }, corsFor(origin));
@@ -303,8 +388,8 @@ const server = http.createServer(async (req, res) => {
         const p = v.payload;
         if (p.k !== sitekey) return send(res, 200, { success: false, 'error-codes': ['sitekey-mismatch'] });
         if (!p.exp || Date.now() > p.exp) return send(res, 200, { success: false, 'error-codes': ['timeout-or-duplicate'] });
-        if (used.has(p.n)) return send(res, 200, { success: false, 'error-codes': ['timeout-or-duplicate'] });
-        used.set(p.n, p.exp);   // burn it: one token, one verification
+        if (used.has(`t:${p.n}`)) return send(res, 200, { success: false, 'error-codes': ['timeout-or-duplicate'] });
+        used.set(`t:${p.n}`, p.exp);   // burn it: one token, one verification
 
         let hostname = '';
         try { hostname = new URL(p.o).hostname; } catch (e) { hostname = p.o || ''; }
@@ -314,6 +399,12 @@ const server = http.createServer(async (req, res) => {
             challenge_ts: new Date(p.iat).toISOString(),
             hostname,
             points: p.p,
+            required: p.req == null ? null : p.req,
+            /* Say plainly where `points` came from. The server checked it against
+               a threshold it authored, and nothing more: no capture was observed
+               server-side, so this is the client's own count. Do not read it as
+               a measure of effort or of humanity. */
+            points_source: 'client-asserted',
             seed: p.s,
         });
     }
@@ -348,8 +439,11 @@ function corsForSite(origin) {
 }
 
 function clientIp(req) {
-    return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-        || req.socket.remoteAddress || 'unknown';
+    if (TRUST_PROXY) {
+        const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+        if (fwd) return fwd;
+    }
+    return req.socket.remoteAddress || 'unknown';
 }
 
 server.listen(PORT, () => {

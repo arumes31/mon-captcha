@@ -15,8 +15,16 @@
      - a forged/altered token is rejected
      - the frame refuses to answer a handshake from the wrong origin
 
-   Requires: the challenge container on :8080 and `node server/verify.mjs` on
-   :8091 with the demo key. Both are started by the runner below if absent.   */
+   Requires: the challenge container on :8080 and a FRESHLY STARTED
+   `node server/verify.mjs` on :8091, keyed for this host:
+
+     MC_KEYS='{"demo-site-key":{"secret":"demo-secret","origins":["http://127.0.0.1:8090"]}}' \
+     MC_CHALLENGE_ORIGINS='http://localhost:8080' node server/verify.mjs
+
+   Freshly started matters: the last assertion deliberately exhausts the per-IP
+   issuance bucket to prove a rotating X-Forwarded-For cannot outrun it, and that
+   bucket takes a minute to refill. Re-running against the same process inside
+   that window fails at the first /challenge instead.                          */
 import { chromium } from 'playwright';
 import { SWIFTSHADER_ARGS } from './harness.mjs';
 import http from 'node:http';
@@ -82,13 +90,20 @@ ok('MonsterCaptcha global exposed', await page.evaluate(() =>
 await page.click('.monster-captcha [role=checkbox]');
 await page.waitForTimeout(400);
 const frameSrc = await page.evaluate(() => {
-    const f = document.querySelector('iframe[title="Monster CAPTCHA challenge"]');
+    const f = document.querySelector('iframe[title="monCAPTCHA challenge"]');
     return f ? f.getAttribute('src') : null;
 });
 ok('clicking opens a challenge frame', !!frameSrc, frameSrc ? frameSrc.slice(0, 78) : 'no iframe');
 ok('frame points at the challenge origin', !!frameSrc && frameSrc.indexOf(CHALLENGE) === 0);
 ok('frame carries embed + sitekey + verify', !!frameSrc &&
     /embed=1/.test(frameSrc) && /sitekey=/.test(frameSrc) && /verify=/.test(frameSrc));
+/* The world is the SERVER's choice, echoed from /challenge into the frame URL.
+   Asserted here because the token-side check further down would still pass if
+   the widget dropped the parameter — the seed in the token comes from the signed
+   blob either way. This is the half that decides which world actually loads. */
+const frameSeed = frameSrc && /[?&]seed=(\d+)/.exec(frameSrc);
+ok('frame carries a server-chosen seed', !!frameSeed, frameSeed ? 'seed=' + frameSeed[1] : frameSrc);
+ok('frame carries the server win threshold', !!frameSrc && /[?&]required=\d+/.test(frameSrc));
 
 // ---- wait for the game to boot inside the frame, then confirm the handshake ----
 let framed = null;
@@ -103,11 +118,33 @@ for (let i = 0; i < 90; i++) {
 }
 ok('challenge reports itself embedded', !!framed);
 
+/* End to end: the world the game BUILT is the one the server named. If
+   rollWorldSeed() ever stops honouring ?seed=, the seed becomes decorative and
+   a recorded winning run can be replayed into its original world again. */
+const builtSeed = framed && await framed.evaluate(
+    () => (window.__captcha && window.__captcha.getWorldSeed && window.__captcha.getWorldSeed())
+).catch(() => null);
+ok('the game built the world the server chose',
+    !!frameSeed && String(builtSeed) === String(frameSeed[1]),
+    `built=${builtSeed} server=${frameSeed ? frameSeed[1] : 'n/a'}`);
+const builtReq = framed && await framed.evaluate(async () => {
+    const c = await import('./src/config.js');
+    return c.CONFIG.CAPTURES_REQUIRED;
+}).catch(() => null);
+ok('the game enforces the server threshold locally', builtReq === 6, 'required=' + builtReq);
+
 // ---- drive a solve from inside the frame ----
 // The capture flow needs real gameplay; the token path is what is under test,
 // so trigger the same emit the win does, through the public bridge.
+//
+// The points count has to be set too: /issue now refuses to mint below the
+// threshold it authored, so emitting from a zero-capture state is (correctly)
+// rejected. That refusal is asserted separately below.
 const solved = framed && await framed.evaluate(async () => {
-    const m = await import('./src/embed.js');
+    const [m, s, c] = await Promise.all([
+        import('./src/embed.js'), import('./src/state.js'), import('./src/config.js'),
+    ]);
+    s.state.creaturesCaught = c.CONFIG.CAPTURES_REQUIRED;
     await m.emitEmbedSolved('local-unverifiable-token');
     return true;
 }).catch((e) => String(e));
@@ -121,7 +158,7 @@ ok('callback reports verified:true (issuer configured)', !!(result && result.inf
 ok('hidden input populated', await page.evaluate(() =>
     (document.querySelector('input[name="monster-captcha-response"]') || {}).value ? true : false));
 ok('modal closed after solve', await page.evaluate(() =>
-    !document.querySelector('iframe[title="Monster CAPTCHA challenge"]')));
+    !document.querySelector('iframe[title="monCAPTCHA challenge"]')));
 ok('checkbox shows verified', await page.evaluate(() =>
     document.querySelector('.monster-captcha [role=checkbox]').getAttribute('aria-checked') === 'true'));
 
@@ -194,15 +231,77 @@ const v10 = await issue(CHALLENGE, {
     sitekey: 'demo-site-key', points: 6, challenge: c1.challenge, origin: 'https://evil.example',
 });
 const v10ok = typeof v10.token === 'string';
-let boundTo = null;
+let vr = {};
 if (v10ok) {
-    const vr = await post(`${VERIFY}/siteverify`, { secret: 'demo-secret', response: v10.token });
-    boundTo = vr.hostname;
+    vr = await post(`${VERIFY}/siteverify`, { secret: 'demo-secret', response: v10.token });
 }
-ok('body-supplied origin cannot override the signed one', v10ok && boundTo === '127.0.0.1',
-    'token bound to ' + boundTo);
+ok('body-supplied origin cannot override the signed one', v10ok && vr.hostname === '127.0.0.1',
+    'token bound to ' + vr.hostname);
+
+/* ---- the server authors the world, not the client ----
+   src/config.js honours ?seed=N ungated, so a client-chosen seed lets a
+   recorded winning run be replayed into the world it was recorded in. The seed
+   must therefore come from us and survive into the token unaltered. */
+ok('challenge carries a server-chosen seed', Number.isInteger(c1.seed),
+    'seed=' + c1.seed);
+ok('challenge states the win threshold', c1.required === 6, 'required=' + c1.required);
+ok('token carries the SERVER seed, not a body-supplied one',
+    v10ok && String(vr.seed) === String(c1.seed), `token seed=${vr.seed} challenge seed=${c1.seed}`);
+ok('siteverify marks points as client-asserted', vr.points_source === 'client-asserted',
+    'points_source=' + vr.points_source);
+
+/* ---- one challenge, one token ----
+   v10 just spent c1, so a second /issue on the same blob must be refused.
+   Before this, one /challenge minted freely for its whole lifetime. */
+const v11 = await issue(CHALLENGE, { sitekey: 'demo-site-key', points: 6, challenge: c1.challenge });
+ok('a challenge cannot mint twice', v11.error === 'challenge-already-used',
+    JSON.stringify(v11).slice(0, 90));
+
+/* ---- the points threshold is enforced where it cannot be edited ----
+   docs/INTEGRATION.md promised this; the server did not implement it, so any
+   caller could name its own score. `required` now travels inside the signed
+   challenge, so it is neither readable-and-lowerable nor inflatable. */
+const c3 = await challengeFor(HOST, 'demo-site-key');
+const v12 = await issue(CHALLENGE, { sitekey: 'demo-site-key', points: 1, challenge: c3.challenge });
+ok('issue refuses a run below the threshold', v12.error === 'insufficient-points',
+    JSON.stringify(v12).slice(0, 90));
+
+const c4 = await challengeFor(HOST, 'demo-site-key');
+const v13 = await issue(CHALLENGE, { sitekey: 'demo-site-key', points: 9999, challenge: c4.challenge });
+let vr13 = {};
+if (typeof v13.token === 'string') {
+    vr13 = await post(`${VERIFY}/siteverify`, { secret: 'demo-secret', response: v13.token });
+}
+/* Honest scope, asserted so nobody later mistakes it: `points` is still the
+   client's own count, so an over-claim IS accepted and echoed. What must hold is
+   that the token also carries the threshold the SERVER set, and labels the claim
+   as client-asserted, so a relying party can tell an observation from an
+   assertion. Verifying the count itself needs per-capture receipts. */
+ok('an inflated claim is echoed but reported next to the server threshold',
+    vr13.points === 9999 && vr13.required === 6 && vr13.points_source === 'client-asserted',
+    `points=${vr13.points} required=${vr13.required} source=${vr13.points_source}`);
 
 ok('no page errors', errs.length === 0, errs.slice(0, 2).join(' | '));
+
+/* ---- MUST BE LAST: this exhausts the per-IP bucket ----
+   clientIp() used to take X-Forwarded-For unconditionally, so one rotating
+   header made the only real meter unreachable — measured at 40/40 minted. With
+   MC_TRUST_PROXY unset the header is ignored and a 429 must still arrive. */
+let limited = false;
+for (let i = 0; i < 60 && !limited; i++) {
+    const r = await fetch(`${VERIFY}/challenge`, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            origin: HOST,
+            'x-forwarded-for': `203.0.113.${(i % 250) + 1}`,
+        },
+        body: JSON.stringify({ sitekey: 'demo-site-key' }),
+    });
+    if (r.status === 429) limited = true;
+}
+ok('a rotating X-Forwarded-For cannot outrun the rate limiter', limited,
+    limited ? 'got 429' : 'minted 60 challenges from one socket');
 
 console.log(`\n  ---- embedtest: ${pass} passed, ${fail} failed ----`);
 console.log('EMBEDTEST_END');

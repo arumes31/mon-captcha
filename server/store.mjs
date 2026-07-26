@@ -1,5 +1,5 @@
 /* ============================================================
-   Monster CAPTCHA — persistence + credential primitives
+   monCAPTCHA — persistence + credential primitives
 
    A JSON file, written atomically, holding accounts, site keys and sessions.
    Deliberately dependency-free to match the rest of the project; swap this one
