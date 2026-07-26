@@ -1,0 +1,74 @@
+name: Deploy demo to GitHub Pages
+
+# Publishes the playable game to https://arumes31.github.io/mon-captcha/ so the
+# banner in README.md links somewhere real. The game is buildless — index.html
+# loads main.js as a native ES module and three.js resolves from the jsdelivr
+# CDN via an importmap — so "building" is copying the static files into _site/.
+#
+# Everything the game loads is a relative path, so it works unchanged from the
+# /mon-captcha/ subpath Pages serves the site from.
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it — a half-applied Pages
+# deployment is worse than a slightly stale one.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Assemble static site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Same file set as the Dockerfile's nginx image, minus the two pieces
+      # that need a server Pages cannot provide:
+      #   - embed/  the widget derives its challenge origin from its own script
+      #             src and calls /challenge + /siteverify on it; there is no
+      #             server/verify.mjs behind Pages, so shipping it would only
+      #             publish a demo that fails on click.
+      #   - portal/ likewise served by server/portal.mjs.
+      # test.html is included: its diagnostic panel only polls window.__captcha.
+      - name: Assemble _site
+        run: |
+          mkdir -p _site
+          cp index.html test.html main.js style.css _site/
+          cp -r src assets _site/
+          # Skip Jekyll: it would drop nothing here today, but the game's
+          # directory layout should never depend on Jekyll's include rules.
+          touch _site/.nojekyll
+
+      # enablement: true turns Pages on for the repo if it is still off, so the
+      # first run does not fail on a setting nobody has flipped yet.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

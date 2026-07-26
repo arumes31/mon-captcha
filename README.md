@@ -1,18 +1,56 @@
-# 🧊 Monster CAPTCHA
+<div align="center">
+
+<a href="https://arumes31.github.io/mon-captcha/">
+  <img src="assets/logo.png" width="170" height="170"
+       alt="Monster CAPTCHA — a red cyber-wolf emblem on a circular tech badge">
+</a>
+
+# Monster CAPTCHA
 
 **A first-person 3D voxel game that proves you're human by making you play, not squint at distorted text.**
-
-Catch six capture-points' worth of wandering creatures in a procedurally generated golden-hour valley — swim, wade, spelunk, and throw capture balls Palworld-style — and the CAPTCHA hands your page a token your backend can verify.
 
 [![CI](https://github.com/arumes31/mon-captcha/actions/workflows/ci.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/arumes31/mon-captcha/actions/workflows/codeql.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/codeql.yml)
 [![Build and push GHCR image](https://github.com/arumes31/mon-captcha/actions/workflows/docker-ghcr.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/docker-ghcr.yml)
+[![Pages](https://github.com/arumes31/mon-captcha/actions/workflows/pages.yml/badge.svg)](https://github.com/arumes31/mon-captcha/actions/workflows/pages.yml)
 [![GHCR](https://img.shields.io/badge/ghcr.io-arumes31%2Fmon--captcha-blue?logo=docker)](https://github.com/arumes31/mon-captcha/pkgs/container/mon-captcha)
+[![Live demo](https://img.shields.io/badge/demo-play%20now-2ea44f?logo=github)](https://arumes31.github.io/mon-captcha/)
+
+</div>
+
+Catch six capture-points' worth of wandering creatures in a procedurally generated golden-hour valley — swim, wade, spelunk, and throw capture balls Palworld-style — and the CAPTCHA hands your page a token your backend can verify.
+
+---
+
+## Try it
+
+<a href="https://arumes31.github.io/mon-captcha/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/captcha-banner-dark.svg">
+    <img src="assets/captcha-banner.svg" width="316" height="90"
+         alt="I'm not a robot — Monster CAPTCHA. Click to play the live demo.">
+  </picture>
+</a>
+
+☝️ **Click the checkbox.** It opens the real game at
+**[arumes31.github.io/mon-captcha](https://arumes31.github.io/mon-captcha/)** — no install, no
+sign-up, works on phones. Catch six capture-points' worth of creatures and the HUD flips to
+solved. ([diagnostic build](https://arumes31.github.io/mon-captcha/test.html) — same game with a
+live panel showing fps, quality tier and capture count.)
+
+> [!NOTE]
+> The image above is a still of the control `embed/monster-captcha.js` renders, not the widget
+> itself — GitHub strips `<script>` and `<iframe>` from READMEs, so nothing can actually run
+> here. The link is the interactive part. The demo runs the game's **direct API** path; the
+> full widget flow (`/challenge` → signed token → `/siteverify`) needs `server/verify.mjs`
+> running, which a static Pages host can't provide — see
+> [Integrating it in your site](#integrating-it-in-your-site).
 
 ---
 
 ## Table of contents
 
+- [Try it](#try-it)
 - [Why](#why)
 - [Features](#features)
 - [Quick start](#quick-start)
@@ -112,9 +150,9 @@ Customer adds two lines:
 <script src="https://captcha.yourdomain.com/embed/monster-captcha.js" defer></script>
 ```
 
-That renders a checkbox. Clicking it opens the game in a modal frame; on success the token
-lands in a hidden `monster-captcha-response` input inside the surrounding form, and the
-customer's **backend** verifies it:
+That renders the checkbox pictured in [Try it](#try-it). Clicking it opens the game in a modal
+frame; on success the token lands in a hidden `monster-captcha-response` input inside the
+surrounding form, and the customer's **backend** verifies it:
 
 ```bash
 curl -X POST https://captcha.yourdomain.com/siteverify \
@@ -246,8 +284,12 @@ server/
 └── keygen.mjs             mint domain-restricted site key / secret pairs
 
 docs/INTEGRATION.md        full widget reference + threat model
+assets/
+├── logo.png              brand mark — README header, favicon, portal emblem
+└── captcha-banner*.svg   README's clickable widget still (light/dark)
+
 tests/                     Playwright QA harness (dev-only, see tests/README.md)
-.github/workflows/         CI, CodeQL, dependency review, GHCR image build
+.github/workflows/         CI, CodeQL, dependency review, GHCR image, Pages demo
 Dockerfile, docker-compose*.yml
 ```
 
@@ -264,7 +306,7 @@ Every module stays under ~700 lines by convention — related concerns get a new
 
 The dev-only QA harness lives in [`tests/`](tests/README.md) — Playwright-driven core assertions, an accessibility audit (axe-core), a many-seed invariant sweep, visual regression against committed baselines, and a cross-browser/mobile-device matrix. None of it ships with the game.
 
-Four workflows run in `.github/workflows/`:
+Five workflows run in `.github/workflows/`:
 
 | Workflow | What it does |
 | --- | --- |
@@ -272,6 +314,12 @@ Four workflows run in `.github/workflows/`:
 | `codeql.yml` | GitHub CodeQL security scan (JS/TS) |
 | `dependency-review.yml` | Flags vulnerable/incompatible new dependencies on PRs |
 | `docker-ghcr.yml` | Builds a multi-arch (amd64/arm64) image and pushes it to GHCR on pushes to `main`/version tags |
+| `pages.yml` | Publishes the playable demo linked from [Try it](#try-it) to GitHub Pages on pushes to `main` |
+
+`pages.yml` copies the same static files the Dockerfile serves, minus `embed/` and the portal —
+both need a server Pages can't run, so publishing them would only ship a demo that fails on
+click. Everything the game loads is a relative path, so it works unchanged from the
+`/mon-captcha/` subpath.
 
 Dependabot (`.github/dependabot.yml`) keeps `tests/`'s npm deps, the GitHub Actions versions, and the Dockerfile's base image current.
 
