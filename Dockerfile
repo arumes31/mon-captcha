@@ -14,6 +14,9 @@ COPY src/ /usr/share/nginx/html/src/
 # integration demo. Served from the same origin as the challenge, because the
 # widget derives the challenge origin from its own script src.
 COPY embed/ /usr/share/nginx/html/embed/
+# Brand mark: the favicon index.html/test.html reference, plus the README's
+# banner stills. Without this the image serves a 404 for both.
+COPY assets/ /usr/share/nginx/html/assets/
 
 EXPOSE 80
 

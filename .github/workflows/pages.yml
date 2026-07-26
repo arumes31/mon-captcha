@@ -7,6 +7,15 @@ name: Deploy demo to GitHub Pages
 #
 # Everything the game loads is a relative path, so it works unchanged from the
 # /mon-captcha/ subpath Pages serves the site from.
+#
+# ONE-TIME SETUP: Settings -> Pages -> Build and deployment -> Source:
+# "GitHub Actions". This workflow cannot do it for you. actions/configure-pages
+# has an `enablement: true` input that claims to, but creating a Pages site is
+# an admin-scoped API call and GITHUB_TOKEN does not carry that scope, so it
+# fails with "Create Pages site failed: Resource not accessible by
+# integration". configure-pages is omitted entirely here: its only outputs are
+# base_url/base_path for static site generators that need to know their
+# subpath at build time, and a plain file copy needs neither.
 
 on:
   push:
@@ -30,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Same file set as the Dockerfile's nginx image, minus the two pieces
       # that need a server Pages cannot provide:
@@ -48,16 +57,10 @@ jobs:
           # Skip Jekyll: it would drop nothing here today, but the game's
           # directory layout should never depend on Jekyll's include rules.
           touch _site/.nojekyll
-
-      # enablement: true turns Pages on for the repo if it is still off, so the
-      # first run does not fail on a setting nobody has flipped yet.
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
+          test -f _site/assets/logo.png  # favicon + README mark must ship
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -71,4 +74,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
