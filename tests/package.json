@@ -15,7 +15,7 @@
     "all": "node itest.mjs && node perfbudget.mjs && node fuzzseed.mjs && node axe.mjs && node visreg.mjs && node matrix.mjs"
   },
   "devDependencies": {
-    "axe-core": "^4.10.2",
+    "axe-core": "^4.13.0",
     "pixelmatch": "^7.2.0",
     "playwright": "~1.61.0",
     "pngjs": "^7.0.0"
