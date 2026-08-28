@@ -103,7 +103,8 @@ Then open `http://localhost:8080/index.html`.
 
 ```bash
 docker build -t mon-captcha .
-docker run -p 8080:80 mon-captcha
+docker run --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  --tmpfs /tmp --tmpfs /var/cache/nginx -p 8080:8080 mon-captcha
 ```
 
 ### Option C — docker compose

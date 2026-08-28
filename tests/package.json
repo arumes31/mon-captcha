@@ -12,10 +12,12 @@
     "fuzzseed": "node fuzzseed.mjs",
     "matrix": "node matrix.mjs",
     "axe": "node axe.mjs",
-    "all": "node itest.mjs && node perfbudget.mjs && node fuzzseed.mjs && node axe.mjs && node visreg.mjs && node matrix.mjs"
+    "api": "node --test ../server/verify.test.mjs",
+    "all": "node --test ../server/verify.test.mjs && node itest.mjs && node perfbudget.mjs && node fuzzseed.mjs && node axe.mjs && node visreg.mjs && node matrix.mjs"
   },
   "devDependencies": {
     "axe-core": "^4.10.2",
+    "http-server": "14.1.1",
     "pixelmatch": "^7.2.0",
     "playwright": "~1.61.0",
     "pngjs": "^7.0.0"

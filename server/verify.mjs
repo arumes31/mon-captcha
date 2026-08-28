@@ -78,6 +78,20 @@ const MAX_BODY = 8192;
    the client only renders a counter. Per-key override: { required: N }. */
 const DEFAULT_REQUIRED = Number(process.env.MC_REQUIRED || 6);
 
+for (const [name, value, minimum, maximum] of [
+    ['MC_PORT', PORT, 1, 65535],
+    ['MC_TTL_MS', TOKEN_TTL_MS, 1000, 3600000],
+    ['MC_CHALLENGE_TTL_MS', CHALLENGE_TTL_MS, 1000, 3600000],
+    ['MC_ISSUE_PER_MIN', ISSUE_PER_MIN, 1, 100000],
+    ['MC_SITE_PER_MIN', SITE_PER_MIN, 1, 100000],
+    ['MC_REQUIRED', DEFAULT_REQUIRED, 1, 1000],
+]) {
+    if (!Number.isInteger(value) || value < minimum || value > maximum) {
+        console.error(`[verify] ${name} must be an integer between ${minimum} and ${maximum}`);
+        process.exit(1);
+    }
+}
+
 /* X-Forwarded-For is a request header: any client can set it to anything. The
    per-IP limiter is the only real meter this service has, so XFF is honoured
    ONLY when the operator states there is a proxy in front of us. Behind
@@ -412,6 +426,11 @@ const server = http.createServer(async (req, res) => {
     send(res, 404, { error: 'not-found' });
 });
 
+server.requestTimeout = 15000;
+server.headersTimeout = 10000;
+server.keepAliveTimeout = 5000;
+server.maxHeadersCount = 64;
+
 function cors(origin) {
     return {
         'access-control-allow-origin': origin,
@@ -450,3 +469,16 @@ server.listen(PORT, () => {
     console.log(`[verify] listening on :${PORT}`);
     console.log(`[verify] site keys: ${Object.keys(KEYS).join(', ')}`);
 });
+
+function shutdown(signal) {
+    console.log(`[verify] ${signal} received; shutting down`);
+    const forced = setTimeout(() => process.exit(1), 10000);
+    forced.unref();
+    server.close((err) => {
+        clearTimeout(forced);
+        process.exit(err ? 1 : 0);
+    });
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
