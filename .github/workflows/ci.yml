@@ -14,14 +14,15 @@ jobs:
   test:
     name: QA harness (tests/)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: "lts/*"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: tests/package-lock.json
 
@@ -29,12 +30,20 @@ jobs:
         working-directory: tests
         run: npm ci
 
+      - name: Audit test dependencies
+        working-directory: tests
+        run: npm audit --audit-level=high
+
+      - name: Verification API tests
+        working-directory: tests
+        run: npm run api
+
       # Only chromium is installed — firefox/webkit are best-effort in this
       # suite (matrix.mjs skips them with a log line if the binary is
       # missing), so there's no need to pay for them in CI.
       - name: Install Playwright (chromium)
         working-directory: tests
-        run: npx playwright install --with-deps chromium
+        run: npx --no-install playwright install --with-deps chromium
 
       # The game is buildless (index.html/main.js/src load straight off disk;
       # three.js resolves from the jsdelivr CDN via the importmap) — serving
@@ -44,7 +53,7 @@ jobs:
       # Playwright session than a bare Python dev server.
       - name: Serve the repo root
         run: |
-          npx --yes http-server . -p 8347 -c-1 --silent > /tmp/http-server.log 2>&1 &
+          ./tests/node_modules/.bin/http-server . -p 8347 -c-1 --silent > /tmp/http-server.log 2>&1 &
           disown
           for i in $(seq 1 30); do
             curl -sf http://localhost:8347/index.html > /dev/null && curl -sf http://localhost:8347/test.html > /dev/null && break
@@ -81,7 +90,7 @@ jobs:
 
       - name: Upload visual-regression diffs (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: visreg-output
           path: |
