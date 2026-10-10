@@ -30,7 +30,7 @@ import { perfSample, perfInstanceTotal, perfDrawnInstances } from './perf.js';
 import { initAudio } from './audio.js';
 import { initMusic, musicSetActive, disposeMusic, musicCurrentMood } from './music.js';
 import { initCaveAudio, updateCaveAudio, caveAudioSetActive, stopCaveAudio, disposeCaveAudio, caveAudioStats } from './caves/caves-audio.js';
-import { initQuality, recordFps } from './quality.js';
+import { initQuality, recordFps, applyPixelRatio } from './quality.js';
 import { ui, cacheUI, updateCounterUI, showClickToPlay, showPauseOverlay, disposeHintToast, captureSeedThumbnail } from './ui.js';
 import { zoneAt, ZONES } from './zones/zones.js';
 import { PARTITION, SPAWN, MOUNTAIN, MOUNTAINS, VENT, CAVES, caveAt, sampleCave, caveConfine, caveCeilingAt, getTerrainHeight, getGroundY, isWaterAt, getWaterLevelAt, getWaterDepth, caveSlippery, riverAt, riverPointAt, riverSpan, BORDER_FALL, OXBOW } from './heightfield.js';
@@ -42,6 +42,10 @@ import { themeBuildLog } from './caves/caves-themes.js';
 /* ============================================================
    Game Animation Loop
    ============================================================ */
+// See the frame-gate note in animate(): absorbs rAF jitter so a cap that
+// matches the display refresh does not halve the frame rate.
+const FRAME_GATE_SLACK_MS = 1;
+
 function animate() {
     if (state.disposed) return;
     state.rafId = requestAnimationFrame(animate);
@@ -49,18 +53,56 @@ function animate() {
     const now = performance.now();
     const elapsedMs = now - state.clock.last;
 
-    // Idle throttle (item 356): when the tab is hidden, or the game is paused
-    // (pointer unlocked and not yet solved), there is no viewer — clamp the
-    // update rate instead of spinning at the 180 FPS ceiling. Otherwise 180 FPS.
+    /* Idle throttle (item 356): when the tab is hidden, or the game is paused
+       (pointer unlocked and not yet solved), there is no viewer — clamp the
+       update rate hard. Otherwise run to CONFIG.MAX_FPS.
+
+       The gate holds a TARGET TIMELINE (clock.next) rather than measuring
+       from the last accepted frame. That distinction is the whole ballgame on
+       a display whose refresh is not a multiple of the cap.
+
+       Measuring from the last accepted frame quantises the result down to the
+       largest submultiple of the panel that fits under the cap, because every
+       rejection re-bases the origin: at 144Hz (6.94ms/tick) a 16.67ms target
+       rejects ticks 1 and 2, accepts tick 3 at 20.8ms, and starts counting
+       again from there — a hard 48 FPS, with 165Hz landing on 55 and 75Hz on
+       an awful 37.5.
+
+       Advancing clock.next by exactly one interval per accepted frame instead
+       means the timeline never drifts, so the long-run rate is the cap itself:
+       144Hz now alternates 13.9/20.8ms spacing for a true 60 FPS average
+       (one refresh period of pacing jitter, which is the unavoidable cost of
+       a cap the panel cannot divide evenly) instead of dropping a fifth of
+       the frames outright.
+
+       FRAME_GATE_SLACK_MS absorbs rAF's sub-millisecond jitter so a tick
+       arriving a hair early is not thrown away — on a 60Hz panel, where the
+       tick and the target coincide exactly, that jitter would otherwise cost
+       one frame every time it lands on the wrong side. */
     const locked = state.controls && state.controls.isLocked;
     const idle = (typeof document !== 'undefined' && document.hidden) || (state.isPaused && !locked);
-    const minMs = idle ? 1000 / CONFIG.IDLE_UPDATE_FPS : 1000 / 180;
-    if (elapsedMs < minMs) {
+    const interval = idle
+        ? 1000 / CONFIG.IDLE_UPDATE_FPS
+        : 1000 / CONFIG.MAX_FPS;
+    if (!state.clock.next) state.clock.next = now;
+    if (now < state.clock.next - FRAME_GATE_SLACK_MS) {
         return;
     }
+    // Advance by whole intervals. If we have fallen more than one interval
+    // behind (a real hitch, a tab switch, an idle->active transition), resync
+    // to now rather than letting the backlog fire a catch-up burst.
+    state.clock.next += interval;
+    if (state.clock.next < now) state.clock.next = now + interval;
 
     let dt = elapsedMs / 1000;
     state.clock.last = now;
+    // One monotonically increasing id per ACCEPTED game frame. Anything that
+    // must happen at most once per frame — even though it is reached from
+    // several renderer.render() passes — keys off this rather than counting
+    // its own invocations (terrain.js's water-mirror cadence does exactly
+    // that: EffectComposer's RenderPass and OutlinePass each re-enter the
+    // Water hook, so an invocation counter there would advance 1-3x a frame).
+    state.frameId = (state.frameId + 1) | 0;
 
     if (!isFinite(dt) || dt <= 0) dt = 1 / 60;
     if (dt > 0.1) dt = 0.1;
@@ -91,6 +133,16 @@ function animate() {
     updateWeather(dt, elapsed);     // applies hemi/exposure/fog, folding in state.caveFx
 
     updateCulling();                // Phase 4b: per-frame chunk occlusion + flora LOD ring
+
+    // Re-arm the single shadow depth pass for this frame. shadowMap.autoUpdate
+    // is permanently false (see engine.js createRenderer) so that the FIRST
+    // renderer.render() below does the pass and every other render() the frame
+    // issues — Water's mirror hook, OutlinePass's two full-scene passes, every
+    // composer fullscreen quad — early-outs instead of redoing it. Skipped
+    // while state.shadowFrozen (engine.js's idle branch), which reuses the
+    // previous frame's map exactly as before.
+    if (state.renderer && !state.shadowFrozen) state.renderer.shadowMap.needsUpdate = true;
+
     renderFrame();
 }
 
@@ -111,6 +163,49 @@ export function destroy() {
     state.disposed = true;
     if (state.rafId) cancelAnimationFrame(state.rafId);
     state.rafId = null;
+
+    /* three's Material.dispose() does NOT dispose the textures the material
+       references, and several sprite factories (weather's flake, lava's haze,
+       mountain's mist/rainbow/fall, ...) build a CanvasTexture inline and hand
+       it straight to a material without recording it anywhere for teardown.
+       Those stayed GPU-resident through every module's dispose(): measured at
+       ~14 orphaned textures per destroy()/init() cycle — and onContextRestored()
+       runs exactly that cycle on every lost context, so a machine losing the
+       context repeatedly leaked its way to a second crash.
+
+       Snapshot them off the live scene here and dispose below, once the
+       modules have finished tearing it down. dispose() is idempotent and only
+       frees the GPU copy — a texture some module-level cache still hands out
+       is simply re-uploaded on next use — so double-covering a texture that
+       its owner also disposes is harmless. */
+    const orphanTex = new Set();
+    const orphanShadows = [];
+    if (state.scene) {
+        state.scene.traverse((o) => {
+            // A LightShadow's depth map is a render target three never frees on
+            // its own — removing the light from the scene does not touch it. Each
+            // init() builds a fresh sun, so without this every cycle stranded
+            // another shadow map (16 MB at the 'high' tier's 2048x2048).
+            if (o.isLight && o.shadow) orphanShadows.push(o.shadow);
+            const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+            for (const m of mats) {
+                if (!m) continue;
+                for (const k in m) {
+                    const t = m[k];
+                    if (t && t.isTexture) orphanTex.add(t);
+                }
+                // ShaderMaterials keep their maps in uniforms, not as named
+                // properties — three/addons Water hides its whole mirror
+                // render target behind uniforms.tReflectionMap.
+                if (m.uniforms) {
+                    for (const k in m.uniforms) {
+                        const u = m.uniforms[k];
+                        if (u && u.value && u.value.isTexture) orphanTex.add(u.value);
+                    }
+                }
+            }
+        });
+    }
 
     disposeMusic();
     disposeCaveAudio(); // Phase 2l: stop + disconnect all cave-audio nodes before ctx.close()
@@ -285,12 +380,34 @@ export function destroy() {
     // destroy()/init() cycle orphaned one EffectComposer's GPU resources
     // per cycle instead of freeing them).
     if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null; }
-    if (state.composer) { try { state.composer.dispose(); } catch (e) {} state.composer = null; }
+    if (state.composer) {
+        /* EffectComposer.dispose() frees ONLY its own ping-pong pair and the
+           internal copy pass — it never walks this.passes. OutlinePass owns 7
+           render targets and UnrealBloomPass owns 11 (its whole mip chain), so
+           relying on the composer alone orphaned ~13 GPU textures per
+           destroy()/init() cycle. Measured: textures climbed 32 -> 45 -> 58 ->
+           71 -> 84 -> 97 across six cycles, dead linear, on a renderer that is
+           deliberately reused across cycles (engine.js's __globalRenderer).
+           onContextRestored() runs this cycle on every lost context. */
+        for (const pass of state.composer.passes || []) {
+            if (pass && typeof pass.dispose === 'function') { try { pass.dispose(); } catch (e) {} }
+        }
+        try { state.composer.dispose(); } catch (e) {}
+        state.composer = null;
+    }
     state.composerEnabled = false;
     state.outlinePass = null;
     state.bloomPass = null;
     state.filmPass = null;
     state.fxPass = null;
+
+    // Every texture that was hanging off a scene material at teardown (see the
+    // snapshot at the top). Modules that track their own textures have already
+    // disposed theirs; this catches the ones nobody owned.
+    for (const t of orphanTex) { try { t.dispose(); } catch (e) {} }
+    orphanTex.clear();
+    for (const sh of orphanShadows) { try { sh.dispose(); } catch (e) {} }
+    orphanShadows.length = 0;
 
     // Clean engine
     if (state.renderer) {
@@ -427,7 +544,37 @@ export function init() {
             }, false);
         }
 
+        /* item 490: shader precompile warm-up.
+
+           three links a material's GPU program the first time that material is
+           actually RENDERED, not when it is built. So every material that is
+           off-screen or hidden at spawn — the cave shells and their dressing,
+           far biomes, weather precipitation, creature variants — paid its
+           compile+link the moment the player first turned toward it or walked
+           into it. A link is synchronous and driver-side, tens to hundreds of
+           milliseconds each on a real GPU, which is exactly the shape of a
+           1-2 second freeze mid-play. Measured over a ten-minute session: the
+           program count was still climbing at minute six (37 programs at t=16s,
+           59 by t=354s), i.e. ~22 stalls spread through normal play.
+
+           compile() walks the whole scene, including objects that are hidden or
+           frustum-culled, and links everything against the current lighting.
+           Rendering one real frame afterwards covers what compile() does not:
+           the shadow depth materials (WebGLShadowMap links those on its first
+           pass) and every composer pass's fullscreen-quad shader.
+
+           Both run here, while the loading overlay is still up and a pause is
+           expected and invisible, instead of during play. Neither is required
+           for correctness — a failure just restores the old lazy behaviour. */
+        try {
+            state.renderer.compile(state.scene, state.camera);
+            renderFrame();
+        } catch (e) {
+            console.warn('[captcha] shader warm-up skipped', e);
+        }
+
         state.clock.last = performance.now();
+        state.clock.next = state.clock.last;
         animate();
         showClickToPlay(true);
 
@@ -513,6 +660,11 @@ function applyResize() {
     // internal ones) were never resized here, so a post-resize frame rendered
     // post-processing at the stale old resolution into the new-size canvas.
     if (state.composer) state.composer.setSize(w, h);
+    // The backing-store pixel BUDGET (CONFIG.MAX_BACKBUFFER_PIXELS) depends on
+    // the window size, so the ratio it resolves to has to be recomputed here —
+    // otherwise dragging a window onto a larger monitor keeps the old ratio and
+    // blows straight through the budget the cap exists to enforce.
+    applyPixelRatio();
 }
 
 function onContextLost(e) {

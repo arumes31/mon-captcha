@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 316 90" width="316" height="90" role="img" aria-labelledby="t">
+  <title id="t">I'm not a robot — Monster CAPTCHA</title>
+  <!--
+    A faithful still of the widget control rendered by embed/monster-captcha.js
+    (light theme): 304x78 card, 28px checkbox, capture-ball mark + wordmark.
+    Kept in step with the widget by hand — this file has no build step, and the
+    widget's own chrome is inline CSS strings, so there is nothing to generate
+    it from. The 6px margin around the card is headroom for the drop shadow.
+
+    Sizes/colours mirror embed/monster-captcha.js:
+      card   #fafafa on #d3d3d3, radius 3, shadow 0 0 4px 1px rgba(0,0,0,.08)
+      box    28x28, 2px #b0b6be on #fff
+      label  14px #222
+      brand  mark 32x32, wordmark 10px/700 #7b8189, legal 9px #9aa0a6
+  -->
+  <defs>
+    <filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#000" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <!-- card -->
+  <rect x="6.5" y="6.5" width="303" height="77" rx="3" fill="#fafafa" stroke="#d3d3d3" stroke-width="1" filter="url(#s)"/>
+
+  <!-- unchecked box -->
+  <rect x="19" y="32" width="26" height="26" rx="2" fill="#ffffff" stroke="#b0b6be" stroke-width="2"/>
+
+  <!-- label -->
+  <text x="58" y="50" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" fill="#222222">I'm not a robot</text>
+
+  <!-- brand column: capture-ball mark, wordmark, legal line -->
+  <g transform="translate(248,12)">
+    <circle cx="16" cy="18" r="11" fill="#6d5a4a"/>
+    <path d="M16 7.5 v21" stroke="#d9a441" stroke-width="3.6" stroke-linecap="round"/>
+    <circle cx="16" cy="18" r="11" fill="none" stroke="#c9ccd1" stroke-width="1.4"/>
+    <rect x="12.6" y="3.4" width="6.8" height="6.2" rx="1.5" fill="#ffd77a" stroke="#b9832c" stroke-width="1.2"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="264" y="55" font-size="10" font-weight="700" fill="#7b8189">Monster</text>
+    <text x="264" y="66" font-size="10" font-weight="700" fill="#7b8189">CAPTCHA</text>
+    <text x="264" y="77" font-size="9" fill="#9aa0a6">Privacy - Terms</text>
+  </g>
+</svg>

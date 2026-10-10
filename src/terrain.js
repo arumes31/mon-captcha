@@ -16,7 +16,7 @@ import { buildMountainFeatures } from './mountain/mountain.js';
 import { buildLava, ensureLavaCourse, lavaAt, inLavaFootprint } from './lava.js';
 import { buildCaves } from './caves/caves.js';
 import { buildChunkedInstances, primeOcclusion } from './culling.js';
-import { weatherState } from './weather/weather.js';
+import { weatherCur, weatherNext, weatherBlend } from './weather/weather.js';
 import { spawnWaterRipple } from './particles.js';
 
 // Snow line per mountain (set from each massif's actual peak height in
@@ -602,7 +602,74 @@ function buildWaterExtras(half) {
     w.wadeAcc = 0;
     _waterExtras = w;
     if (state.water) {
-        state.water.onBeforeRender = (renderer, scene, camera) => updateWaterExtras(camera);
+        // three's Water OWNS onBeforeRender: that hook is where it renders the
+        // mirror pass and writes back `textureMatrix` and `eye`. Assigning over
+        // it (as this used to) silently killed all three — textureMatrix stayed
+        // identity so the shader sampled the reflection at raw world XZ, miles
+        // outside [0,1] and clamped to a single edge texel, and `eye` stayed at
+        // the origin so the Fresnel term pinned near 1 and mixed `waterColor`
+        // out entirely. The surface rendered as one flat opaque slab. CHAIN
+        // onto the addon's hook instead; extras run first so the reflection
+        // pass sees this frame's glints/foam/debris.
+        // ...but only on the tiers that can afford it. That hook re-renders the
+        // WHOLE scene into the mirror target, so honouring it doubles draw calls
+        // for every frame the lake is in frustum (measured 466 -> 928) — exactly
+        // the cost this project refuses to spend on a device with no real GPU.
+        // Below 'high' we skip the mirror render and just publish `eye`, which
+        // is the uniform that actually fixed the look: with it correct the
+        // Fresnel term resolves properly, so `waterColor`/`scatter` and the sun
+        // specular come back and the surface reads as water instead of a slab.
+        // What's lost without the mirror pass is only the reflected image
+        // itself (reflectionSample stays black, so grazing angles read as dark
+        // deep water) — a fair trade at the tier that already drops the whole
+        // post chain.
+        //
+        // PERF (framedrop pass): 'high' is the DEFAULT tier for anyone whose
+        // GPU is not detected as a software rasterizer — i.e. almost every
+        // real player — so the "doubles draw calls" cost above was being paid
+        // on essentially every frame of a normal session. The mirror plane is
+        // ARENA_SIZE+2 across, so its bounding sphere is in frustum from
+        // basically anywhere in the arena; there is no viewpoint that opts out.
+        // Two things fixed here, neither of which changes what the tier looks
+        // like in motion:
+        //
+        //  1. AT MOST ONCE PER GAME FRAME. This hook fires from every
+        //     renderer.render() that walks the scene and reaches the water
+        //     mesh — EffectComposer's RenderPass, and (whenever a creature is
+        //     hovered) OutlinePass's depth-mask and prepare-mask passes, which
+        //     each render the FULL scene again. So a frame could pay for THREE
+        //     complete mirror re-renders of the world, and it did so only
+        //     while the crosshair happened to rest on a creature: the cost
+        //     switched on and off as the player swept the view around, which
+        //     is what "framedrops when moving" felt like. Keying off
+        //     state.frameId (game.js) collapses that to one, deterministically.
+        //     The redundant nested SHADOW pass those renders also triggered is
+        //     handled globally now — see engine.js createRenderer.
+        //
+        //  2. MIRROR CADENCE. The reflected image is a 512px target sampled
+        //     through the normal-map distortion at alpha 0.84 — it does not
+        //     need a fresh full scene render every single frame. Rendering it
+        //     every WATER_MIRROR_FRAME_SKIP-th frame halves the remaining
+        //     cost; on the frames in between we publish `eye` exactly like the
+        //     sub-'high' branch does, so the Fresnel/specular term stays
+        //     correct and only the (already heavily distorted) reflection
+        //     image is one frame stale.
+        const waterOwnHook = state.water.onBeforeRender;
+        let lastMirrorFrame = -1;
+        state.water.onBeforeRender = function (renderer, scene, camera, ...rest) {
+            updateWaterExtras(camera);
+            const q = state.qualityLevel;
+            const fid = state.frameId;
+            const wantMirror = (q === 'high' || q === 'ultra')
+                && fid !== lastMirrorFrame
+                && (fid % CONFIG.WATER_MIRROR_FRAME_SKIP) === 0;
+            if (wantMirror) {
+                lastMirrorFrame = fid;
+                waterOwnHook.call(this, renderer, scene, camera, ...rest);
+            } else {
+                this.material.uniforms['eye'].value.setFromMatrixPosition(camera.matrixWorld);
+            }
+        };
     }
 }
 
@@ -681,8 +748,8 @@ function updateWaterExtras(camera) {
 
     // item 70: ice-over during snowfall
     if (w.iceOverlay) {
-        const ws = weatherState();
-        const cold = (ws.cur === 'snowfall' ? 1 - ws.t : 0) + (ws.next === 'snowfall' ? ws.t : 0);
+        const wb = weatherBlend();
+        const cold = (weatherCur() === 'snowfall' ? 1 - wb : 0) + (weatherNext() === 'snowfall' ? wb : 0);
         const m = w.iceOverlay.material;
         m.opacity += (cold * 0.55 - m.opacity) * Math.min(1, dt * 0.5);
     }
@@ -799,11 +866,15 @@ export function buildTerrain() {
     // engine.js's createRenderer() — the same signal quality.js uses to pick
     // the STARTING tier — so it is a reasonable proxy for "start on a weak
     // device" here. Segment count varies the Water plane's tessellation cost;
-    // `size` varies the normal-map's tiling (the ripple SCALE, not just
-    // distortionScale, which quality.js already tunes live per tier).
+    // the reflection target varies its per-frame FILL cost — that mirror pass
+    // re-renders the whole scene, so it is the priciest thing on the water and
+    // the one worth stepping down. 512 is already finer than the chunky voxels
+    // it reflects; a weak start halves it again. (There is no `size` option to
+    // set here: r160's Water constructor never reads options.size, so the
+    // ripple-tiling uniform stays at the shader default of 1.0 either way.)
     const weakStart = !!state.softwareRenderer;
     const waterSegs = weakStart ? 14 : 32;
-    const waterRippleSize = weakStart ? 1.6 : 1.0;
+    const waterReflectRes = weakStart ? 256 : 512;
 
     // 1. Water — three/addons Water covering the WHOLE arena at the shared
     //    waterline. The dry-land floor in heightfield.js guarantees terrain
@@ -811,14 +882,13 @@ export function buildTerrain() {
     //    one reflective plane serves the entire water network.
     const waterGeo = new THREE.PlaneGeometry(CONFIG.ARENA_SIZE + 2, CONFIG.ARENA_SIZE + 2, waterSegs, waterSegs);
     const water = new Water(waterGeo, {
-        textureWidth: 1024,
-        textureHeight: 1024,
+        textureWidth: waterReflectRes,
+        textureHeight: waterReflectRes,
         waterNormals: makeWaterNormals(),
         sunDirection: SUN_DIRECTION.clone(),
         sunColor: 0xffd6a0,
         waterColor: 0x1f7d8c,
         distortionScale: 1.0,
-        size: waterRippleSize,
         fog: state.scene.fog !== undefined,
         alpha: 0.84,
     });
