@@ -57,9 +57,17 @@ const RIVER_ROCK_MARGIN = 1.3; // wall blend (0.85) + safety: a cave's rock must
 // intrude on a river / pond / basin so the shell would poke into the water or
 // the carve would eat the bank? Sampled during placement, when CAVES is still
 // empty so isWaterAt reports the raw outdoor water network (no cave overrides).
-// The deliberate under-river crossing is exempt (its nodes carry `underwater`).
+// The deliberate under-river crossing is exempt ONLY while it is genuinely deep:
+// a node carrying `underwater` still has to hold CONFIG.CAVE_UNDER_WATER_CLEARANCE
+// of solid rock between the water line and its vault. The exemption used to be
+// unconditional, which is how a tunnel whose ceiling sat 0.15 below the water
+// surface counted as a legal crossing. Anything shallower is treated like any
+// other cave intruding on water — i.e. rejected.
+function crossingDeepEnough(node) {
+    return node.floorY + node.ceilH <= CONFIG.POND_WATER_LEVEL - CONFIG.CAVE_UNDER_WATER_CLEARANCE;
+}
 function footprintHitsWater(node, isWaterAt) {
-    if (node.underwater) return false;
+    if (node.underwater) return !crossingDeepEnough(node);
     if (isWaterAt(node.x, node.z, 0)) return true;
     const reach = node.hw + RIVER_ROCK_MARGIN;
     for (let a = 0; a < 12; a++) {
@@ -69,7 +77,10 @@ function footprintHitsWater(node, isWaterAt) {
     return false;
 }
 function caveHitsRiver(cave, isWaterAt) {
-    if (cave.topo && cave.topo.features.includes('underwater')) return false; // intended crossing
+    // NOTE: no blanket 'underwater' exemption any more. Every node is tested,
+    // and footprintHitsWater only forgives an `underwater` node that actually
+    // clears the required rock cover — so a crossing that got clamped back up
+    // to a shallow depth after generation is caught here and the cave dropped.
     for (const path of cave.paths) for (const n of path) if (footprintHitsWater(n, isWaterAt)) return true;
     return false;
 }
@@ -301,7 +312,8 @@ export function placeCaves(deps) {
     const branchBias = (branchRng() * 2 - 1) * CONFIG.CAVE_BRANCH_BIAS_STRENGTH;
     const rMin = pondR + 12;
     const rMax = half - 15;
-    const count = 2 + Math.floor(rng() * 3); // 2..4 caves
+    const count = CONFIG.CAVE_COUNT_MIN
+        + Math.floor(rng() * (CONFIG.CAVE_COUNT_MAX - CONFIG.CAVE_COUNT_MIN + 1));
     const mounts = MOUNTAINS || [];
 
     // Free (non-mountain) host bearings: rocky highlands, then random rim sectors.
@@ -315,9 +327,10 @@ export function placeCaves(deps) {
     // the SAME mountain flank — don't sit close enough for their topology branches
     // (which aren't nearOther-checked) to interpenetrate. A final overlap pass
     // below is the hard guarantee.
+    const SEP_SQ = CONFIG.CAVE_SEPARATION * CONFIG.CAVE_SEPARATION;
     const nearOther = (x, z) => {
         for (const c of placed) for (const path of c.paths) for (const nd of path)
-            if ((nd.x - x) ** 2 + (nd.z - z) ** 2 < 64) return true;
+            if ((nd.x - x) ** 2 + (nd.z - z) ** 2 < SEP_SQ) return true;
         return false;
     };
     // Phase 2m item 2: caves may now bore into mountain FLANKS (only the solid
@@ -416,7 +429,7 @@ export function placeCaves(deps) {
     // terrain builder can still stack a VISIBLE voxel for (columns floor at
     // y=-2.0 -> lowest renderable top ~-1.5). Keeps getGroundY exact and never
     // leaves a pit bottom as invisible ground.
-    for (const c of placed) for (const p of c.paths) for (const n of p) if (n.floorY < -1.5) n.floorY = -1.5;
+    for (const c of placed) for (const p of c.paths) for (const n of p) if (n.floorY < CONFIG.CAVE_FLOOR_MIN) n.floorY = CONFIG.CAVE_FLOOR_MIN;
 
     // Phase 2m item 4: GUARANTEE the minimum navigable width on every walkable
     // node AFTER topology. Cathedral only widens; belly/choke no longer narrow;

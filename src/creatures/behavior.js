@@ -538,7 +538,18 @@ export function updateCreatures(dt, elapsed) {
             if (c._golemSwPrev !== undefined && (c._golemSwPrev < 0) !== (sw < 0)) {
                 const distSq = playerPos ? p.distanceToSquared(playerPos) : Infinity;
                 if (distSq < CONFIG.GOLEM_STOMP_RANGE * CONFIG.GOLEM_STOMP_RANGE) {
-                    const near = 1 - Math.sqrt(distSq) / CONFIG.GOLEM_STOMP_RANGE;
+                    // Falloff is QUADRATIC (was linear). A golem stomps every
+                    // 0.4-0.6s and the shake lasts 0.28s, so with a linear
+                    // falloff over the old 30m radius even a far-off golem
+                    // still fed the shake bus a sizeable magnitude often
+                    // enough to keep the screen permanently moving. Squaring
+                    // it — plus the tighter GOLEM_STOMP_RANGE — drops distant
+                    // footfalls under camera-shake.js's MIN_SHAKE_MAG floor so
+                    // they are ignored entirely, leaving the shake for a golem
+                    // that is genuinely on top of you. The thump SFX and dust
+                    // still play at the old range; only the camera calms down.
+                    const t = 1 - Math.sqrt(distSq) / CONFIG.GOLEM_STOMP_RANGE;
+                    const near = t * t;
                     playThump();
                     if (state.qualityLevel !== 'low') spawnParticleBurst(p.x, p.y + 0.02, p.z, def.particle, 4, 0x2c2a26);
                     triggerScreenShake(CONFIG.GOLEM_STOMP_SHAKE_MAG * near, CONFIG.GOLEM_STOMP_SHAKE_TIME, CONFIG.GOLEM_STOMP_SHAKE_FREQ);

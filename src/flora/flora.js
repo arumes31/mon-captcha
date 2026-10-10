@@ -28,7 +28,7 @@ function inCaveFootprint(x, z) {
     return inLavaFootprint(x, z);
 }
 import { zoneAt, zoneBlendAt } from '../zones/zones.js';
-import { addSpecies, speciesRadius } from './flora-trees.js';
+import { addSpecies, speciesRadius, shadeLeaf } from './flora-trees.js';
 
 // item 401: deterministic per (WORLD_SEED, zoneId, species) scalar in [-1,1] —
 // a small standalone integer hash (no shared RNG stream needed, so it's cheap
@@ -246,14 +246,19 @@ export function buildFlora(half, V_STEP) {
         const h = getTerrainHeight(x, z);
         if (h > 4.5) continue;
         const bushR = 0.45 + r() * 0.45;
-        // bush foliage keys off the zone grass tone so autumn reads rusty, jungle lush
-        const bushCol = new THREE.Color(zone.grass).offsetHSL(0, -0.05, -0.04);
+        // bush foliage keys off the zone grass tone so autumn reads rusty, jungle lush.
+        // shadeLeaf, not offsetHSL, for both darkenings — same linear-lightness crush
+        // as the tree canopies (see flora-trees.js): a dark zone grass like Ashen
+        // Hollow's #4a2c1a carries only 0.039 linear lightness, so -0.04 clamped the
+        // whole bush to #000000. The saturation nudge stays on offsetHSL; it cannot
+        // drive a colour to black on its own.
+        const bushCol = shadeLeaf(zone.grass, 0, -0.04).offsetHSL(0, -0.05, 0).getHex();
         const blobs = 6 + Math.floor(r() * 6);
         for (let b = 0; b < blobs; b++) {
             const bx = (r() - 0.5) * bushR * 1.6;
             const bz = (r() - 0.5) * bushR * 1.6;
             const by = r() * bushR * 0.7;
-            const c = bushCol.clone().offsetHSL(0, 0, (r() - 0.5) * 0.08).getHex();
+            const c = shadeLeaf(bushCol, 0, (r() - 0.5) * 0.08).getHex();
             details.push({ x: x + bx, y: h + 0.15 + by, z: z + bz, sx: 0.68, sy: 0.68, sz: 0.68, color: c, kind: 'leaf' });
         }
         if (r() < 0.35 && zone.flora.flowers > 0.3) {

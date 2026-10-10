@@ -331,7 +331,36 @@ export function makeRiverCrossing(deps, featRng) {
         const c = riverPointAt(u, 0, 'B');
         const here = riverAt(c.x, c.z);
         if (!here) continue;
-        const reach = here.wWater + CONFIG.RIVER_BANK + 3.2;   // bank-to-bank half length
+        /* The deep section must span the river's FULL corridor — the wet
+           channel plus its bank blend — not just the visible water, so there
+           is never a shallow stretch tucked under the bank. The ramps live
+           entirely outside that. */
+        const UNDER_CEIL_H = 2.3;
+        const waterY = CONFIG.POND_WATER_LEVEL;
+        // Vault top sits CLEARANCE below the water line; the floor is one
+        // vault height under that.
+        const underFloorY = waterY - CONFIG.CAVE_UNDER_WATER_CLEARANCE - UNDER_CEIL_H;
+        // A crossing that cannot be dug deep enough is not built AT ALL, rather
+        // than being built shallow. caves-data.js clamps cave floors to
+        // CAVE_FLOOR_MIN (the lowest renderable voxel top), so committing to a
+        // floor below it would silently get clamped back up and produce exactly
+        // the old behaviour: a tunnel skimming just under the riverbed with its
+        // vault ~0.15 below the water line. Bail instead — no cave then passes
+        // under water at all, which is the rule. This unblocks itself
+        // automatically if the overburden pass ever lowers CAVE_FLOOR_MIN.
+        if (underFloorY < CONFIG.CAVE_FLOOR_MIN) return null;
+        const wDeep = here.wWater + CONFIG.RIVER_BANK;         // half-width held at full depth
+
+        const gA0 = baseHeight(c.x + nx * (wDeep + 4), c.z + nz * (wDeep + 4));
+        const gB0 = baseHeight(c.x - nx * (wDeep + 4), c.z - nz * (wDeep + 4));
+        // Ramp run needed to climb from the deep floor back to daylight
+        // without exceeding the walkable slope. Deriving it (rather than using
+        // the old fixed 3.2) is what lets CLEARANCE grow without turning the
+        // approach into a cliff the player just falls down.
+        const rise = Math.max(gA0, gB0) - 0.2 - underFloorY;
+        const rampRun = Math.max(3.2, rise / CONFIG.CAVE_UNDER_WATER_MAX_SLOPE);
+        const reach = wDeep + rampRun;                         // bank-to-bank half length
+
         // both mouths must land on dry, unobstructed ground
         const mA = { x: c.x + nx * reach, z: c.z + nz * reach };
         const mB = { x: c.x - nx * reach, z: c.z - nz * reach };
@@ -347,19 +376,20 @@ export function makeRiverCrossing(deps, featRng) {
         for (let i = 0; i <= nSteps; i++) {
             const d = reach - i * (2 * reach / nSteps);       // +reach (A) .. -reach (B)
             const x = c.x + nx * d, z = c.z + nz * d;
-            const rv = riverAt(x, z);
-            const under = rv && rv.lat < rv.wWater + 0.6;
-            const endT = Math.min(i, nSteps - i) / nSteps;    // 0 at a mouth, 0.5 at centre
+            const absD = Math.abs(d);
             const gEnd = d > 0 ? gA : gB;
             let floorY, ceilH, hw;
+            const under = absD <= wDeep;                       // under the river corridor
             if (under) {
-                floorY = -2.45;                                // dry pocket below the riverbed
-                ceilH = 2.3;                                   // vault top just under the water line
+                floorY = underFloorY;                          // dry pocket FAR below the riverbed
+                ceilH = UNDER_CEIL_H;
                 hw = 1.5 + Math.sin(i * 0.6) * 0.2;
                 if (i < underMin) underMin = i; if (i > underMax) underMax = i;
             } else {
-                const flare = Math.max(0, 1 - endT / 0.16);    // wide arch mouths
-                floorY = (gEnd - 0.2) - smooth(Math.min(1, endT / 0.4)) * 2.0; // ramp down toward the water
+                // 0 at the edge of the deep section -> 1 at the mouth
+                const t = Math.min(1, (absD - wDeep) / Math.max(0.001, reach - wDeep));
+                const flare = Math.max(0, 1 - (1 - t) / 0.16); // wide arch mouths
+                floorY = underFloorY + ((gEnd - 0.2) - underFloorY) * smooth(t);
                 ceilH = 4.4 + flare * 1.4;
                 hw = 1.6 + flare * 1.5;
             }

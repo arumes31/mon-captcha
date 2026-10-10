@@ -2,7 +2,7 @@
   "name": "3dcaptcha-tests",
   "version": "0.0.0",
   "private": true,
-  "description": "DEV-ONLY QA harness for the Monster CAPTCHA. Never shipped; src/ stays buildless and dependency-free.",
+  "description": "DEV-ONLY QA harness for the monCAPTCHA. Never shipped; src/ stays buildless and dependency-free.",
   "type": "module",
   "scripts": {
     "itest": "node itest.mjs",
