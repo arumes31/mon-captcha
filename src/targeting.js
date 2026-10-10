@@ -33,6 +33,11 @@ import { ui } from './ui.js';
 import { getGroundY } from './heightfield.js';
 import { caveCaptureBonus, tunnelBackDot, captureUiTags } from './caves/caves-gameplay.js';
 
+// Broad-phase reach for the per-frame hover raycast: CAPTURE_RANGE plus a
+// margin comfortably larger than the biggest creature's own half-extent, so a
+// creature whose CENTRE is outside this can have no part inside CAPTURE_RANGE.
+const REACH_SQ = (CONFIG.CAPTURE_RANGE + 6) * (CONFIG.CAPTURE_RANGE + 6);
+
 const TIER_COLORS = { common: '#9aa5b1', uncommon: '#4ade80', rare: '#7db2ff', legendary: '#ffd75e' };
 const RING_SURE = new THREE.Color(0x5ff0d0);   // ~100% — Palworld cyan
 const RING_RISKY = new THREE.Color(0xff9a4d);  // low odds — HUD amber
@@ -294,9 +299,24 @@ export function updateTargeting() {
         state.raycaster.set(reuse.rayOrigin, reuse.rayDir);
         state.raycaster.far = CONFIG.CAPTURE_RANGE;
 
+        // Only creatures that could POSSIBLY be hit go into the candidate
+        // list. The ray is already capped at CAPTURE_RANGE (12) but that cap
+        // is applied per-intersection, AFTER Raycaster has walked every mesh
+        // handed to it — so feeding it the whole arena meant ~11 bounding
+        // sphere + matrixWorld tests per creature per frame for the 90%+ of
+        // the population standing tens of units away and mathematically
+        // unreachable. Rejecting them by body-centre distance first is exactly
+        // equivalent (REACH_SQ carries a generous margin for the largest
+        // creature's own extent, elderGolem at scale 2.6) and leaves only the
+        // handful actually in range to be traced.
         reuse.intersectArray.length = 0;
+        const camPos = reuse.rayOrigin;
         for (const c of state.creatures) {
             if (!c.alive) continue;
+            const dx = c.pos.x - camPos.x;
+            const dy = (c.pos.y + c.centerY) - camPos.y;
+            const dz = c.pos.z - camPos.z;
+            if (dx * dx + dy * dy + dz * dz > REACH_SQ) continue;
             for (const p of c.parts) reuse.intersectArray.push(p);
         }
         if (reuse.intersectArray.length > 0) {
