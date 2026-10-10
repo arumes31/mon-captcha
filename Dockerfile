@@ -3,7 +3,9 @@
 # resolves from the jsdelivr CDN via the importmap in those two files. There
 # is no npm install/build step for the shipped game — nginx just serves the
 # files as-is.
-FROM nginx:1.31-alpine
+FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+
+RUN apk upgrade --no-cache
 
 COPY index.html /usr/share/nginx/html/index.html
 COPY test.html /usr/share/nginx/html/test.html
