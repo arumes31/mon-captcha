@@ -10,7 +10,9 @@ export const state = {
     camera: null,
     renderer: null,
     controls: null,
-    clock: { last: 0 },
+    // last: timestamp of the last ACCEPTED frame (drives dt).
+    // next: the frame gate's target timeline — see animate().
+    clock: { last: 0, next: 0 },
     rafId: null,
     disposed: false,
     softwareRenderer: false, // set once by engine.js's createRenderer() via gpu-detect.js
@@ -86,6 +88,13 @@ export const state = {
     fpsRingFilled: 0,
     lowFpsFrames: 0,
     highFpsFrames: 0,
+
+    // Render scheduling. frameId counts ACCEPTED game frames (game.js's
+    // animate()); shadowFrozen is engine.js's idle latch, honoured by the
+    // once-per-frame shadow re-arm in animate(). See engine.js createRenderer
+    // for why the shadow pass is armed manually instead of via autoUpdate.
+    frameId: 0,
+    shadowFrozen: false,
 
     // Game flow
     isPaused: false,

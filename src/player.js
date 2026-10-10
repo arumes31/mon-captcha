@@ -214,7 +214,20 @@ export function updatePlayer(dt) {
     } else {
         // Step off a ledge into a pit / shaft / lower gallery -> a real fall so
         // you land ON the lower floor (which getGroundY returns), never through it.
-        if (feetY < (pos.y - p.eyeHeight) - 0.55) {
+        //
+        // The threshold MUST stay above CONFIG.VOXEL_SIZE. getGroundY returns
+        // `base + k * VOXEL_SIZE + VOXEL_SIZE/2` — the top face of a voxel
+        // column — so ordinary sloping ground descends in hard 0.85-unit
+        // steps. With the old hard-coded 0.55 every single one of those steps
+        // was deeper than the threshold, so simply walking downhill kicked the
+        // player into free-fall and back onto the floor over and over. That
+        // bypassed the smooth terraced-height lerp in the else-branch below
+        // (which exists precisely to absorb these steps) and showed up as a
+        // constant vertical judder while moving — a second, independent
+        // contributor to "the screen shakes all the time" alongside the
+        // camera-shake bus bug. PLAYER_LEDGE_DROP clears one voxel step with
+        // margin, so a terrace is smoothed and only a genuine drop still falls.
+        if (feetY < (pos.y - p.eyeHeight) - CONFIG.PLAYER_LEDGE_DROP) {
             p.grounded = false;
             p.vy = 0;
         } else {
