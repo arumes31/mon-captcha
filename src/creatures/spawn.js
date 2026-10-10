@@ -24,6 +24,66 @@ import { spawnCaveLife } from './cave-spawn.js';
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+/* ------------------------------------------------------------
+   Golem population cap (CONFIG.MAX_GOLEMS_PER_WORLD).
+
+   plan:'golem' is the only gait that drives the screen-shake bus: every
+   footfall of every golem within CONFIG.GOLEM_STOMP_RANGE fires
+   triggerScreenShake, at (3 + speed*5)/PI stomps a second each. Golems enter
+   a world from four independent places — the guaranteed commons (stone/moss/
+   elder are all tier 'common'), the weighted filler, the legendary slot
+   (crystalGolem) and the cave-dweller guarantee — plus cave-spawn.js's own
+   slumberTroll sleeper, which is placed per themed cave and so scales with the
+   cave count. Nothing coordinated them, so a seed routinely fielded ten or
+   more and the shake bus was being retriggered from several directions at
+   once. Rather than keep tuning ranges and falloffs, cap the population.
+
+   Surplus golems are SUBSTITUTED, not dropped, so every guarantee the deck
+   makes still holds: the replacement matches the tier the slot was filling
+   (win-fuel commons stay commons, the legendary slot stays legendary) and
+   matches the aquatic/hover/cave-dweller role so placement still works.
+   ------------------------------------------------------------ */
+const isGolem = (t) => t.plan === 'golem';
+
+function golemSubstitute(def, rng) {
+    // Progressively looser matches; the first non-empty pool wins.
+    const tiers = [
+        (t) => t.tier === def.tier && !!t.aquatic === !!def.aquatic && !!t.hover === !!def.hover
+            && CAVE_DWELLERS.has(t.id) === CAVE_DWELLERS.has(def.id),
+        (t) => t.tier === def.tier && !!t.aquatic === !!def.aquatic && !!t.hover === !!def.hover,
+        (t) => t.tier === def.tier,
+    ];
+    for (const ok of tiers) {
+        const pool = CREATURE_TYPES.filter((t) => !t.cave && !isGolem(t) && ok(t));
+        if (pool.length) return pool[Math.floor(rng() * pool.length)];
+    }
+    return null; // nothing comparable exists — keep the golem rather than break the slot
+}
+
+function capGolems(deck) {
+    const maxG = CONFIG.MAX_GOLEMS_PER_WORLD;
+    if (!(maxG >= 0)) return;
+    // Own seeded stream, same precedent as item 394's raritySkew: drawing from
+    // Math.random() here would shift every placement roll below it and change
+    // world layout for a given seed far beyond the creature swap itself.
+    const rng = mulberry32((CONFIG.WORLD_SEED ^ 0x60fe11) >>> 0);
+    let kept = 0;
+    for (let i = 0; i < deck.length; i++) {
+        if (!isGolem(deck[i])) continue;
+        if (kept < maxG) { kept++; continue; }
+        const sub = golemSubstitute(deck[i], rng);
+        if (sub) deck[i] = sub;
+    }
+}
+
+// Live count of golems actually BUILT this world (makeRecord below increments
+// it). cave-spawn.js reads the remaining budget before placing its sleeper,
+// which is the one golem source that does not come through the deck above.
+let _golemsPlaced = 0;
+export function golemsRemaining() {
+    return Math.max(0, CONFIG.MAX_GOLEMS_PER_WORLD - _golemsPlaced);
+}
+
 // Cave-flavoured types (bats, cave spiders, crystal/gem kin, drifting spirits,
 // glow shrooms) — biased to spawn inside the seeded caves like fire types bias
 // to the magma vent. glowfish stays out (caves hold no water).
@@ -71,6 +131,7 @@ function pointInSector(s, halfArena) {
 }
 
 export function spawnCreatures() {
+    _golemsPlaced = 0; // fresh budget per world build (destroy()/init() re-runs this)
     const halfArena = CONFIG.ARENA_SIZE / 2 - CONFIG.CREATURE_BOUNDARY_MARGIN;
     const target = state.qualityLevel === 'low'
         ? CONFIG.CREATURE_SPAWN_COUNT_LOW
@@ -120,6 +181,11 @@ export function spawnCreatures() {
             if (roll <= 0) { deck.push(t); break; }
         }
     }
+
+    // Enforce the golem ceiling across the WHOLE assembled deck — guarantees,
+    // legendary slot, cave dwellers and filler alike. Runs last so nothing
+    // added above can sneak an extra golem past it.
+    capGolems(deck);
 
     const span = riverSpan();
     let spawned = 0, attempts = 0;
@@ -215,6 +281,7 @@ export function spawnCreatures() {
    `extra` is merged in for per-type state (cave homes, pool refs…).
    ------------------------------------------------------------ */
 export function makeRecord(def, x, y, z, extra) {
+    if (isGolem(def)) _golemsPlaced++; // single choke point both spawners share
     const built = makeCreature(def);
     const meta = PLAN_META[def.plan];
     built.group.position.set(x, y, z);

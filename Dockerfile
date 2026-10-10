@@ -3,13 +3,22 @@
 # resolves from the jsdelivr CDN via the importmap in those two files. There
 # is no npm install/build step for the shipped game — nginx just serves the
 # files as-is.
-FROM nginx:1.31-alpine
+FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+
+RUN apk upgrade --no-cache
 
 COPY index.html /usr/share/nginx/html/index.html
 COPY test.html /usr/share/nginx/html/test.html
 COPY main.js /usr/share/nginx/html/main.js
 COPY style.css /usr/share/nginx/html/style.css
 COPY src/ /usr/share/nginx/html/src/
+# Embeddable widget for third-party sites (embed/monster-captcha.js) plus its
+# integration demo. Served from the same origin as the challenge, because the
+# widget derives the challenge origin from its own script src.
+COPY embed/ /usr/share/nginx/html/embed/
+# Brand mark: the favicon index.html/test.html reference, plus the README's
+# banner stills. Without this the image serves a 404 for both.
+COPY assets/ /usr/share/nginx/html/assets/
 
 EXPOSE 80
 

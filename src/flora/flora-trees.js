@@ -43,6 +43,49 @@ export const TREE_LEAF_PALETTES = {
     gray:    [0x7d8a99, 0x8a97a6, 0x6b7886, 0x9aa5b1],
 };
 
+/* ------------------------------------------------------------
+   Leaf shading (item 180 follow-up).
+
+   three r160 runs colour management with an srgb-LINEAR working
+   space, so Color.offsetHSL() adds/subtracts LINEAR lightness —
+   but every AO/jitter amount below is authored perceptually.
+   A forest green like #33691e carries only 0.077 linear
+   lightness, which is LESS than the 0.088 the canopy AO term
+   alone subtracts: setHSL clamps at zero, so interior canopy
+   voxels ended up literally #000000 and the rest of the dark
+   half of each palette lost ~70% of its albedo. Side and
+   underside faces see neither the sun nor skyFill (both come
+   from above/one quadrant), so they are lit by the hemisphere
+   term alone — at that irradiance a crushed leaf lands in the
+   ACES toe and tone-maps to ~(0,15,4). The crown read as holes
+   punched in the foliage rather than shaded leaves.
+
+   So shade in sRGB HSL, where the authored numbers mean what
+   they say, and stop the dark end at SHADE_FLOOR so a shaded
+   leaf still resolves as colour instead of a silhouette. A
+   palette entry already darker than the floor (burnt needles,
+   snowpine) keeps its own lightness rather than being lifted,
+   and brightening is left unclamped so the sun-facing edge of
+   the AO gradient is unchanged. Deep shade also drifts slightly
+   cooler and less saturated, the way canopy shadow picks up
+   skylight rather than just going grey.
+   ------------------------------------------------------------ */
+const SHADE_FLOOR = 0.30; // sRGB HSL lightness the tone curve still resolves
+const _hsl = { h: 0, s: 0, l: 0 };
+
+export function shadeLeaf(hex, hueOff, lightOff) {
+    const c = new THREE.Color(hex);
+    c.getHSL(_hsl, THREE.SRGBColorSpace);
+    const shade = Math.max(0, -lightOff); // how deep into the canopy this voxel sits
+    c.setHSL(
+        _hsl.h + hueOff + shade * 0.10,
+        _hsl.s * (1 - shade * 0.6),
+        Math.max(Math.min(_hsl.l, SHADE_FLOOR), _hsl.l + lightOff),
+        THREE.SRGBColorSpace
+    );
+    return c;
+}
+
 // Dispatch: species tag -> builder
 export function addSpecies(details, x, z, V_STEP, species, r) {
     switch (species) {
@@ -229,9 +272,8 @@ export function addTree(details, x, z, V_STEP, species, r) {
                 // lightness gradient baked into the instance color at build time.
                 const edgeT = Math.min(1, dist / localR);
                 const col = scorched ? 0x3a322a : colors[Math.floor(r() * colors.length)];
-                const c = new THREE.Color(col);
-                c.offsetHSL(
-                    hueBias + (r() - 0.5) * 0.02, 0,
+                const c = shadeLeaf(col,
+                    hueBias + (r() - 0.5) * 0.02,
                     lightBias + (r() - 0.5) * 0.1 + (edgeT - 0.55) * CONFIG.TREE_CANOPY_AO
                 );
                 details.push({
@@ -301,8 +343,7 @@ export function addTree(details, x, z, V_STEP, species, r) {
             const dz = Math.sin(ang) * canopyRadius * 0.85;
             const drop = 3 + Math.floor(r() * 4);
             for (let s = 0; s < drop; s++) {
-                const c = new THREE.Color(colors[Math.floor(r() * colors.length)]);
-                c.offsetHSL(0, 0, (r() - 0.5) * 0.08 - s * 0.015);
+                const c = shadeLeaf(colors[Math.floor(r() * colors.length)], 0, (r() - 0.5) * 0.08 - s * 0.015);
                 details.push({
                     x: x + dx + (r() - 0.5) * 0.15, y: canopyBaseY + 0.3 - s * 0.34, z: z + dz + (r() - 0.5) * 0.15,
                     sx: 0.42, sy: 0.7, sz: 0.42,
@@ -373,8 +414,8 @@ function addPine(details, x, z, V_STEP, snowy, r) {
                 if (d > tr) continue;
                 if (r() > needleDensity) continue;
                 const edgeT = d / tr; // item 180: interior darker, outer edge lighter
-                const c = new THREE.Color(needle).offsetHSL(
-                    hueBias, 0, lightBias + (r() - 0.5) * 0.08 + (edgeT - 0.5) * CONFIG.TREE_CANOPY_AO
+                const c = shadeLeaf(needle,
+                    hueBias, lightBias + (r() - 0.5) * 0.08 + (edgeT - 0.5) * CONFIG.TREE_CANOPY_AO
                 );
                 details.push({
                     x: x + dx, y: ty, z: z + dz,
@@ -431,7 +472,7 @@ function addPalm(details, x, z, V_STEP, r) {
         for (let s = 1; s <= segs; s++) {
             const t = s / segs;
             const droop = t * t * 1.0;
-            const c = new THREE.Color(0x4a8f3a).offsetHSL(hueBias, 0, (r() - 0.5) * 0.08 - t * 0.04);
+            const c = shadeLeaf(0x4a8f3a, hueBias, (r() - 0.5) * 0.08 - t * 0.04);
             details.push({
                 x: topX + Math.cos(fa) * flen * t,
                 y: crownY + 0.25 - droop,
