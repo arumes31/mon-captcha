@@ -88,7 +88,7 @@ Text/image CAPTCHAs are miserable for humans and increasingly trivial for bots. 
 
 ## Quick start
 
-The game is **buildless** — `index.html` loads `main.js` as a native ES module, and Three.js itself resolves from the jsdelivr CDN via an import map. There's nothing to `npm install` or compile for the game itself.
+The game is **buildless** — `index.html` loads `main.js` as a native ES module, and Three.js itself resolves from the jsdelivr CDN via an import map (every file pinned by SHA-384 in the map's `integrity` block, so a tampered CDN response is refused). There's nothing to `npm install` or compile for the game itself.
 
 ### Option A — any static file server
 

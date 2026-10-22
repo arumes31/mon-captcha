@@ -9,6 +9,9 @@
     <title>monCAPTCHA</title>
 
     <!-- Import map: resolve bare specifiers 'three' and 'three/addons/' to jsdelivr CDN -->
+    <!-- "integrity" pins the SHA-384 of every three.js file the game fetches (including
+         transitive addon imports), so a tampered CDN response is refused instead of run.
+         Bumping the three.js version means regenerating every hash below. -->
     <script type="importmap">
     {
       "imports": {
@@ -20,6 +23,25 @@
         "three/addons/postprocessing/RenderPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js",
         "three/addons/postprocessing/UnrealBloomPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js",
         "three/addons/postprocessing/OutputPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js"
+      },
+      "integrity": {
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js": "sha384-61S/Nu32S3E5+n+KpCOTb2eRYps6fVKm+9Gz1QBvSePFthb46f063Aa/qe/lykFZ",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js": "sha384-DyPEugnjSi/n0L5Cne+ve49CSAs61osB3dOTC0btEP0lbXLHgNBE6EaQ5rTt5zot",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Sky.js": "sha384-wuDrkXs4/6ZP+utdQQ7XggxDVg1Lt50OuvF4p/Ac5chibUcyJqnBdJqACclm1Hea",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Water.js": "sha384-b2DK7E3v9WMsIsU4WKc6WEAO/EAEvFSOt75ibrQByZCGSlLFJPtsWHp5xFhvXkT+",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js": "sha384-L+Ns9skCAqjab7aG8LH5VLknBCoENW7p37sOj39jnITwlWZFabWc29JwzgYf6ygy",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/FilmPass.js": "sha384-UCDYapUwmB5sJEhDJhfct+N1C5oB/QbIa4QH3WYv9XSYqmkoQzs9Bo3xc8LZAHOp",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/MaskPass.js": "sha384-SDM80tiGflO8UDV/QzR/mASjcc/+wF7KfRVFNHJUIPcTctwoPI8GoWVTlccZw7V4",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutlinePass.js": "sha384-MkMr6wfJqCAstqPyxRj4XZm+VvpA+rdQr/zZtKBs6DHBvwO43M/2uN9cVjgQRmJU",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js": "sha384-RJJc+pg+Ue2ZwXlf8n78cPHMiHrqfr+AxxabF5vkXMXjNPF6nSUoqb20IQXkMo6c",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/Pass.js": "sha384-gSqIFh8vMmp1veyOysIS3KPVUl/A5JPefYvW4b89OeYeW0bwkrjN7qcC1h0XJK/K",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js": "sha384-LwKrkOBAkmQ2KT4cv6P6q9Rb9L01GIFU34Zp16tGWZoBnrVuujfjpYZb7OxEMb0J",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js": "sha384-zetU6HhR/vTtgSvnS9DE+GQPZhVT/ZOSLa/1+DSM6rkM9hvBgQWr9bCEosZt93ch",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js": "sha384-R734/7SvtqjjeteDKG4qcQA0adDCZ1ZcKfYUZsbVr9qqHGlgSXH9eNN4b3NIgwuc",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/CopyShader.js": "sha384-kzVlcj2amFaRNIWZ5zE0PmIN+QTNWWvrgKk31S8N/7w0nf7Qq3xqxHRLbD2UPPSl",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/FilmShader.js": "sha384-GWbaFL+YETHIs8fQTiqlvgFHQhE5+pWoyDoRLDt4ttEcNt4zY2B0YD1tZRq0g4F4",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js": "sha384-621kiA/kIdX8rtH6VU6+SwMVx+B8g7MQ6x0fei5dZVX3CQZSLkpOlglIk9sxE+/g",
+        "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/OutputShader.js": "sha384-fT4woAJJtXcAxElHG1cGfIZkiSxaj7u+24LHlfNVDZZ9aSjZvr2emMGPmcD9eF0V"
       }
     }
     </script>
