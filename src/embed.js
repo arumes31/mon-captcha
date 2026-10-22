@@ -126,30 +126,38 @@ async function issueSignedToken() {
             return null; // never ship a token over plaintext to a remote host
         }
     } catch (e) { return null; }
-    try {
-        const res = await fetch(url.toString(), {
-            method: 'POST',
-            mode: 'cors',
-            credentials: 'omit',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-                sitekey: (p && p.get('sitekey')) || '',
-                // The embedding domain is NOT asserted here — it is inside the
-                // signed challenge, put there by the server after the browser
-                // told it the customer page's real origin. This request's own
-                // Origin header is always the challenge host, so it could never
-                // identify the customer.
-                challenge: _challenge,
-                points: state.creaturesCaught,
-                // No seed: the issuer authored it and reads its own copy out of
-                // the signed challenge. Sending ours would only be a claim, and
-                // it is ignored on the far side.
-            }),
-        });
-        if (!res.ok) return null;
-        const data = await res.json();
-        return data && typeof data.token === 'string' ? data.token : null;
-    } catch (e) { return null; }
+    /* The issuer refuses a challenge redeemed sooner than its minimum solve
+       time (MC_MIN_SOLVE_MS) and says how long to wait. A real player almost
+       never hits it, but when one does, wait it out once instead of failing. */
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const res = await fetch(url.toString(), {
+                method: 'POST',
+                mode: 'cors',
+                credentials: 'omit',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    sitekey: (p && p.get('sitekey')) || '',
+                    // The embedding domain is NOT asserted here — it is inside the
+                    // signed challenge, put there by the server after the browser
+                    // told it the customer page's real origin. This request's own
+                    // Origin header is always the challenge host, so it could never
+                    // identify the customer.
+                    challenge: _challenge,
+                    points: state.creaturesCaught,
+                    // No seed: the issuer authored it and reads its own copy out of
+                    // the signed challenge. Sending ours would only be a claim, and
+                    // it is ignored on the far side.
+                }),
+            });
+            const data = await res.json().catch(() => null);
+            if (res.ok) return data && typeof data.token === 'string' ? data.token : null;
+            const wait = data && data.error === 'solved-too-fast' ? Number(data.retry_after_ms) : NaN;
+            if (attempt > 0 || !(wait >= 0 && wait <= 30000)) return null;
+            await new Promise((r) => setTimeout(r, wait + 250));
+        } catch (e) { return null; }
+    }
+    return null;
 }
 
 /* Called from capture.js the moment the run is won. */

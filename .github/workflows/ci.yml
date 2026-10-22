@@ -36,6 +36,12 @@ jobs:
         working-directory: tests
         run: npm ci
 
+      # Spawns server/verify.mjs directly (node built-ins only, no browser):
+      # startup guards, minimum solve time, X-Forwarded-For hop handling.
+      - name: Verification server checks (verifytest)
+        working-directory: tests
+        run: npm run verifytest
+
       # Only chromium is installed — firefox/webkit are best-effort in this
       # suite (matrix.mjs skips them with a log line if the binary is
       # missing), so there's no need to pay for them in CI.

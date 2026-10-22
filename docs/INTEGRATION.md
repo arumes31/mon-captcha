@@ -10,8 +10,8 @@ Two moving parts:
 
 > [!IMPORTANT]
 > **Not on this branch.** A self-service portal (`server/portal.mjs`) and DNS TXT domain
-> verification (`server/dnsverify.mjs`) exist only on the unmerged `test1` branch, and
-> `server/store.mjs` is present but not wired into `verify.mjs`. Keys are provisioned with
+> verification (`server/dnsverify.mjs`) exist only on the unmerged `test1` branch, as does the
+> hashed credential store (`server/store.mjs`). Keys are provisioned with
 > `keygen.mjs` and read from `MC_KEYS` / `MC_KEYS_FILE` as plaintext secrets. Earlier revisions
 > of this document described those features as shipped; they are not. Anything below marked
 > **(test1 only)** is not a control you currently have.
@@ -70,8 +70,8 @@ capture bar (default 6).
 > `test1` (see the note at the top).
 >
 > A self-service portal (`server/portal.mjs`, `MC_USE_STORE`, `MC_SIGNING_KEY`) is also
-> **(test1 only)**. `verify.mjs` on this branch signs with each key's own secret and does not
-> import `server/store.mjs`.
+> **(test1 only)**. `verify.mjs` on this branch signs with each key's own plaintext secret;
+> there is no credential store on this branch.
 
 ## 3. Run the verification service
 
@@ -90,11 +90,14 @@ node server/verify.mjs                                   # -> :8091
 | `MC_CHALLENGE_TTL_MS` | how long a player has to finish (default 300000). Also the window in which one challenge is spendable — it mints exactly one token. |
 | `MC_ISSUE_PER_MIN` | per-IP cap on `/challenge` + `/issue` (default 20) |
 | `MC_SITE_PER_MIN` | per-**site-key** cap on the same endpoints (default 240). IPs are rentable; this is the bucket an attacker cannot rotate away from. |
-| `MC_TRUST_PROXY` | set to `1` **only** when a reverse proxy is in front. Read the [deployment note](#deployment-mc_trust_proxy) — wrong either way costs you the per-IP limiter or every client's real address. |
+| `MC_TRUST_PROXY` | set **only** when a reverse proxy is in front: the number of proxy hops (`1` for one nginx/Caddy/Cloudflare). The client address is taken that many entries from the right of `X-Forwarded-For`. Read the [deployment note](#deployment-mc_trust_proxy) — wrong either way costs you the per-IP limiter or every client's real address. |
+| `MC_MIN_SOLVE_MS` | minimum wall clock between `/challenge` and `/issue` (default 10000). Earlier calls get `solved-too-fast` plus `retry_after_ms`; the widget waits and retries once. `0` disables. |
+| `MC_DEMO` | `1` starts with the built-in `demo-site-key` / `demo-secret` when no keys are configured, listening on `127.0.0.1` only. Local demos only — the secret is public. |
 | `MC_REQUIRED` | default capture points needed to solve (default 6). Per-key `required` wins. Keep it equal to `CONFIG.CAPTURES_REQUIRED` in `src/config.js` unless you are also passing `?required=` through. |
 
-Starting with neither `MC_KEYS` nor `MC_KEYS_FILE` uses a printed demo key and warns loudly.
-A malformed key entry is a startup failure, not a runtime surprise.
+Starting with neither `MC_KEYS` nor `MC_KEYS_FILE` is a startup failure, unless `MC_DEMO=1`
+asks for the public demo key (loopback only). A malformed key entry is a startup failure too,
+not a runtime surprise.
 
 ## 4. Customer adds two lines
 
@@ -157,7 +160,7 @@ curl -X POST https://captcha.yourdomain.com:8091/siteverify \
 ```json
 { "success": true, "challenge_ts": "2026-07-25T20:51:39.156Z",
   "hostname": "customer-a.com", "points": 6, "required": 6,
-  "points_source": "client-asserted", "seed": "3245627019" }
+  "points_source": "client-asserted", "solve_ms": 48213, "seed": "3245627019" }
 ```
 
 **Check `hostname` yourself** — it is the site the challenge was embedded on.
@@ -167,6 +170,9 @@ it, so you need not repeat the comparison. But read `points_source` and believe 
 the number the browser reported.** The server checked it against a threshold it authored, which
 stops an arbitrary score being minted into a token — it did not witness any capture. Do not treat
 `points` as a measure of effort, and do not scale trust with it.
+
+`solve_ms` is the one thing the server *did* measure: wall clock between `/challenge` and
+`/issue`. It is never below `MC_MIN_SOLVE_MS`.
 
 Failures come back as `{"success": false, "error-codes": [...]}`:
 
@@ -199,6 +205,8 @@ the design does buy:
   signed challenge, so a client cannot pick a favourable world or lower its own bar
 * `points` is **checked against that threshold**, so it cannot be inflated into the token
 * issuance is **rate limited per IP and per site key**, so bulk minting is at least metered
+* a challenge **cannot be redeemed sooner than `MC_MIN_SOLVE_MS`** (default 10 s) after it was
+  fetched, so a script that skips the game still waits out a plausible run per token
 
 ### The limits, stated plainly
 
@@ -226,8 +234,13 @@ real meter this service has, and it reads XFF **only** when you say a proxy is i
 
 | deployment | setting |
 |---|---|
-| behind nginx / Caddy / Cloudflare | `MC_TRUST_PROXY=1` (and make the proxy overwrite, not append, XFF) |
+| behind one nginx / Caddy / Cloudflare | `MC_TRUST_PROXY=1` |
+| behind N proxies (e.g. CDN -> nginx) | `MC_TRUST_PROXY=N` |
 | exposed directly | leave it unset — otherwise a rotating header mints without limit |
+
+The value is a hop count. Proxies append the address they saw, so the client is the N-th entry
+from the **right** of `X-Forwarded-For`; anything to its left was sent by the caller and is
+ignored. A header with fewer than N entries falls back to the socket address.
 
 ### The in-page token is not the token
 
@@ -358,7 +371,7 @@ there is no client-asserted origin anywhere in the token path.
   unless it is `localhost`.
 * The nonce and rate-limit stores are in-process. Behind more than one instance, back them
   with Redis or equivalent, or replay protection is per-instance only.
-* Set a real `MC_KEYS`. Starting without it uses a printed demo key and warns.
+* Set a real `MC_KEYS`. Without it the server refuses to start (`MC_DEMO=1` is local-only).
 
 ---
 
@@ -367,7 +380,7 @@ there is no client-asserted origin anywhere in the token path.
 ```sh
 docker compose up -d --build
 MC_KEYS='{"demo-site-key":{"secret":"demo-secret","origins":["http://127.0.0.1:8090"]}}' \
-MC_CHALLENGE_ORIGINS='http://localhost:8080' node server/verify.mjs &
+MC_CHALLENGE_ORIGINS='http://localhost:8080' MC_MIN_SOLVE_MS=0 node server/verify.mjs &
 # open http://localhost:8080/embed/demo.html
 ```
 
@@ -375,5 +388,6 @@ End-to-end test (real cross-origin: host on `127.0.0.1`, challenge on `localhost
 
 ```sh
 cd tests && node embedtest.mjs      # 28 checks (widget, cross-origin)
+cd tests && node verifytest.mjs     # verify.mjs startup guards, solve floor, XFF hops
 cd tests && node portaltest.mjs     # 33 checks (portal, DNS gate, rotation)
 ```
