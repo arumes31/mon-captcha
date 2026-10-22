@@ -49,6 +49,7 @@ Run from inside `tests/` (each script is standalone; exit code 0 = pass):
 | `node visreg.mjs --update` | (Re)generate the committed baselines. |
 | `node matrix.mjs` | chromium (required) + firefox/webkit (best-effort) + mobile profiles. |
 | `node axe.mjs` | axe-core accessibility audit on both pages. |
+| `node verifytest.mjs` | `server/verify.mjs` only, no browser: startup guards, minimum solve time, X-Forwarded-For hops. |
 | `node shots.mjs [page] [seed] [name]` | Ad-hoc / phase screenshot into `output/`. |
 
 Or `npm run itest`, `npm run perfbudget`, … `npm run all`.
@@ -185,6 +186,7 @@ tests/
   fuzzseed.mjs     many-seed invariance sweep (item 391)
   matrix.mjs       cross-browser + mobile (items 388/389)
   axe.mjs          accessibility audit (item 395)
+  verifytest.mjs   verification server guards (spawns server/verify.mjs)
   baseline/        committed golden screenshots (kept in git)
   output/ diff/    transient run output (git-ignored)
   package.json     dev-only tooling manifest

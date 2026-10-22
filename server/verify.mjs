@@ -6,6 +6,11 @@
      MC_KEYS='{"demo-site-key":{"secret":"demo-secret","origins":["http://localhost:8090"]}}' \
      node server/verify.mjs
 
+   or, for a throwaway local demo with the built-in public key (binds to
+   127.0.0.1 only):
+
+     MC_DEMO=1 node server/verify.mjs
+
    WHY THIS EXISTS
    ---------------
    The in-page token (src/security.js generateToken) is SHA-256 over values the
@@ -43,6 +48,9 @@
        lower the bar it has to clear
      * `points` is checked against that threshold, so it cannot be inflated —
        but it is still the client's own count, not an observed one
+     * a challenge cannot be redeemed sooner than MC_MIN_SOLVE_MS after it was
+       issued, so a script that skips the game still pays the wall-clock cost
+       of a plausible run per token (it can parallelise; the rate limits cap that)
      * issuance is metered per IP and per site key, so bulk minting is at least
        rate limited (see MC_TRUST_PROXY — get that setting wrong and the per-IP
        half is bypassed by one request header)
@@ -78,12 +86,33 @@ const MAX_BODY = 8192;
    the client only renders a counter. Per-key override: { required: N }. */
 const DEFAULT_REQUIRED = Number(process.env.MC_REQUIRED || 6);
 
+/* Floor on challenge -> /issue wall clock. The server cannot see captures, but
+   it can see time: a scripted caller that never renders the game would
+   otherwise mint a token in two back-to-back requests. The clock starts at
+   /challenge, which the widget calls when the checkbox is clicked, so the game
+   boot counts towards it. 0 disables the check. */
+const MIN_SOLVE_MS = Math.max(0, Number(process.env.MC_MIN_SOLVE_MS ?? 10000) || 0);
+
 /* X-Forwarded-For is a request header: any client can set it to anything. The
    per-IP limiter is the only real meter this service has, so XFF is honoured
    ONLY when the operator states there is a proxy in front of us. Behind
    nginx/Caddy/Cloudflare set MC_TRUST_PROXY=1; exposed directly, leave it off
-   or the limiter is bypassed by one header. */
-const TRUST_PROXY = /^(1|true|yes)$/i.test(process.env.MC_TRUST_PROXY || '');
+   or the limiter is bypassed by one header.
+
+   The value is the number of trusted proxy hops (1/true/yes = one). Proxies
+   APPEND the peer they saw, so the client address is that many entries from
+   the RIGHT; everything to its left is whatever the caller chose to send. */
+const TRUST_PROXY_HOPS = (() => {
+    const v = String(process.env.MC_TRUST_PROXY || '').trim();
+    if (/^(true|yes)$/i.test(v)) return 1;
+    const n = Number(v);
+    return Number.isInteger(n) && n > 0 ? n : 0;
+})();
+
+/* The built-in demo key's secret is printed right here, so anyone can forge its
+   tokens offline. It is only ever used when asked for by name, and then the
+   server listens on loopback only. */
+const DEMO = /^(1|true|yes)$/i.test(process.env.MC_DEMO || '');
 
 /* Where the CHALLENGE itself is served from. /issue is called by the challenge
    frame, so this — not the customer's site — is what its Origin header carries. */
@@ -112,8 +141,13 @@ const KEYS = (() => {
             process.exit(1);
         }
     }
-    console.warn('[verify] no MC_KEYS / MC_KEYS_FILE — using a DEMO key. Never do this in production.');
-    console.warn('[verify] generate a real one: node server/keygen.mjs --origin https://your-customer.com');
+    if (!DEMO) {
+        console.error('[verify] no MC_KEYS / MC_KEYS_FILE — refusing to start.');
+        console.error('[verify] generate a real key: node server/keygen.mjs --origin https://your-customer.com');
+        console.error('[verify] (or set MC_DEMO=1 for a local-only demo key whose secret is public)');
+        process.exit(1);
+    }
+    console.warn('[verify] MC_DEMO=1 — using the public DEMO key on 127.0.0.1 only. Never do this in production.');
     return { 'demo-site-key': { secret: 'demo-secret', origins: ['http://localhost:8090'] } };
 })();
 
@@ -323,6 +357,15 @@ const server = http.createServer(async (req, res) => {
         const ip = clientIp(req);
         if (!rateOk(ip, sitekey)) return send(res, 429, { error: 'rate-limited' }, corsFor(origin));
 
+        /* Too soon to have played. Checked BEFORE the burn, so an early call
+           costs the caller a rate-limit slot but not its challenge. */
+        const elapsed = Date.now() - Number(ch.payload.iat || 0);
+        if (!(elapsed >= MIN_SOLVE_MS)) {
+            return send(res, 403, {
+                error: 'solved-too-fast', retry_after_ms: Math.max(0, MIN_SOLVE_MS - elapsed),
+            }, corsFor(origin));
+        }
+
         /* One challenge, one token. Without this a single /challenge blob mints
            tokens for its whole lifetime, so an attacker fetches one and then
            needs no further round trip to that endpoint at all. Burned AFTER the
@@ -352,6 +395,8 @@ const server = http.createServer(async (req, res) => {
             exp: now + TOKEN_TTL_MS,
             p: points,
             req: required,
+            // Server-measured challenge -> issue wall clock, for the relying party.
+            ms: Math.max(0, now - Number(ch.payload.iat || now)),
             // The seed is ours, from the signed challenge — body.seed is ignored.
             s: ch.payload.seed == null ? null : String(ch.payload.seed),
         }, cfg.secret);
@@ -405,6 +450,8 @@ const server = http.createServer(async (req, res) => {
                server-side, so this is the client's own count. Do not read it as
                a measure of effort or of humanity. */
             points_source: 'client-asserted',
+            // Wall clock between /challenge and /issue, as measured here.
+            solve_ms: p.ms == null ? null : p.ms,
             seed: p.s,
         });
     }
@@ -439,14 +486,20 @@ function corsForSite(origin) {
 }
 
 function clientIp(req) {
-    if (TRUST_PROXY) {
-        const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-        if (fwd) return fwd;
+    if (TRUST_PROXY_HOPS) {
+        const hops = String(req.headers['x-forwarded-for'] || '')
+            .split(',').map((s) => s.trim()).filter(Boolean);
+        // Right-most untrusted entry. Fewer entries than proxies means the
+        // chain is not what the operator described: fall back to the socket.
+        if (hops.length >= TRUST_PROXY_HOPS) return hops[hops.length - TRUST_PROXY_HOPS];
     }
     return req.socket.remoteAddress || 'unknown';
 }
 
-server.listen(PORT, () => {
-    console.log(`[verify] listening on :${PORT}`);
+// The demo key's secret is public, so a demo server is never reachable off-box.
+const HOST = DEMO && !process.env.MC_KEYS && !process.env.MC_KEYS_FILE ? '127.0.0.1' : undefined;
+
+server.listen(PORT, HOST, () => {
+    console.log(`[verify] listening on ${HOST || ''}:${PORT}`);
     console.log(`[verify] site keys: ${Object.keys(KEYS).join(', ')}`);
 });

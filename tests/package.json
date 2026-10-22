@@ -12,6 +12,7 @@
     "fuzzseed": "node fuzzseed.mjs",
     "matrix": "node matrix.mjs",
     "axe": "node axe.mjs",
+    "verifytest": "node verifytest.mjs",
     "all": "node itest.mjs && node perfbudget.mjs && node fuzzseed.mjs && node axe.mjs && node visreg.mjs && node matrix.mjs"
   },
   "devDependencies": {

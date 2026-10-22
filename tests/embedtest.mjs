@@ -19,7 +19,10 @@
    `node server/verify.mjs` on :8091, keyed for this host:
 
      MC_KEYS='{"demo-site-key":{"secret":"demo-secret","origins":["http://127.0.0.1:8090"]}}' \
-     MC_CHALLENGE_ORIGINS='http://localhost:8080' node server/verify.mjs
+     MC_CHALLENGE_ORIGINS='http://localhost:8080' MC_MIN_SOLVE_MS=0 node server/verify.mjs
+
+   MC_MIN_SOLVE_MS=0 because the direct /issue checks below redeem a challenge
+   the instant it is fetched; the floor itself is covered by verifytest.mjs.
 
    Freshly started matters: the last assertion deliberately exhausts the per-IP
    issuance bucket to prove a rotating X-Forwarded-For cannot outrun it, and that
