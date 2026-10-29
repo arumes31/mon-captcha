@@ -16,16 +16,18 @@
      node server/keygen.mjs --name customer-a \
                             --origin https://customer-a.com \
                             --origin https://www.customer-a.com \
-                            --file server/keys.json
+                            --file /etc/moncaptcha/keys.json
 
    Without --file it prints the JSON for MC_KEYS. With --file it merges the new
    key into that file (creating it if needed) and never overwrites an existing
-   entry unless --force is given.
+   entry unless --force is given. The file must live OUTSIDE this repository
+   (keygen refuses otherwise) and is written owner-only.
    ============================================================ */
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const argv = process.argv.slice(2);
 function flags(name) {
@@ -92,7 +94,56 @@ const secret = `mcs_${rand(32)}`;
 // the fallback lives (MC_REQUIRED, else 6).
 const entry = required == null ? { secret, origins } : { secret, origins, required };
 
+/* Write `data` to `abs` so that only the owner can ever read it.
+   writeFileSync's `mode` applies only when the file is CREATED: rewriting an
+   existing, wider-permissioned file keeps those permissions and would drop
+   fresh secrets into it. So the content goes to a new temp file opened
+   exclusively at 0600, is fchmod'd (umask cannot widen it, but be explicit),
+   synced, and renamed over the target — the target inode is replaced, not
+   reused. The result is checked, never assumed. */
+function writeOwnerOnly(abs, data) {
+    const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.${process.pid}.${rand(6)}.tmp`);
+    let fd;
+    try {
+        fd = fs.openSync(tmp, 'wx', 0o600);
+        fs.fchmodSync(fd, 0o600);
+        fs.writeFileSync(fd, data);
+        fs.fsyncSync(fd);
+        fs.closeSync(fd); fd = undefined;
+        fs.renameSync(tmp, abs);
+    } catch (e) {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* already failing */ }
+        try { fs.unlinkSync(tmp); } catch (_) { /* never created */ }
+        console.error(`error: could not write ${abs}: ${e.message}`);
+        process.exit(1);
+    }
+    // POSIX modes mean nothing on Windows; access there is the directory's ACL.
+    if (process.platform === 'win32') return 'Windows: access follows the folder ACL — restrict it to your account';
+    const mode = fs.statSync(abs).mode & 0o777;
+    if (mode & 0o077) {
+        console.error(`error: ${abs} ended up mode ${mode.toString(8)}, readable by others. Fix it with chmod 600.`);
+        process.exit(1);
+    }
+    return 'mode 0600, verified';
+}
+
+/* Secrets never go under a directory a static server might publish. The repo
+   root IS one — the quick start serves it — so a keys file anywhere inside it
+   is one URL away from the internet. */
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+function insideRepo(abs) {
+    const rel = path.relative(REPO_ROOT, abs);
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 const file = flags('file')[0];
+if (file && insideRepo(path.resolve(file))) {
+    console.error(`error: --file ${file} is inside the repository (${REPO_ROOT}).`);
+    console.error('       The repo root is a web document root in the quick start, so anything in it can be');
+    console.error('       downloaded. Keep keys outside it, e.g. --file /etc/moncaptcha/keys.json');
+    console.error('       or --file ~/.config/moncaptcha/keys.json');
+    process.exit(1);
+}
 if (!file) {
     console.log('\nAdd to MC_KEYS (or a keys file via --file):\n');
     console.log(JSON.stringify({ [sitekey]: entry }, null, 2));
@@ -110,9 +161,9 @@ if (!file) {
     }
     db[sitekey] = entry;
     fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, JSON.stringify(db, null, 2) + '\n', { mode: 0o600 });
-    console.log(`\nwrote ${abs} (mode 0600, ${Object.keys(db).length} key(s))`);
-    console.log(`start the service with:  MC_KEYS_FILE=${file} node server/verify.mjs`);
+    const perms = writeOwnerOnly(abs, JSON.stringify(db, null, 2) + '\n');
+    console.log(`\nwrote ${abs} (${perms}, ${Object.keys(db).length} key(s))`);
+    console.log(`start the service with:  MC_KEYS_FILE=${abs} node server/verify.mjs`);
 }
 
 console.log(`

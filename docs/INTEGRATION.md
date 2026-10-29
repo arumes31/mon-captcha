@@ -41,7 +41,7 @@ Mint a key straight into a JSON file:
 ```sh
 node server/keygen.mjs --origin https://customer-a.com \
                        --origin https://www.customer-a.com \
-                       --file server/keys.json
+                       --file /etc/moncaptcha/keys.json
 ```
 
 ```
@@ -58,7 +58,9 @@ node server/keygen.mjs --origin https://customer-a.com \
 
 Origins must be exact `scheme://host[:port]` — no path, no trailing slash. `keygen` refuses
 anything else, warns on non-HTTPS, and will not silently replace an existing key (`--force`
-to add a second for the same name). The file is written `0600`.
+to add a second for the same name). The file is written owner-only (`0600`, replaced
+atomically and checked afterwards), and `--file` must point outside the repository — the
+repo root doubles as a static document root, so a keys file inside it is downloadable.
 
 Omit `--file` to just print the JSON for `MC_KEYS`. Pass `--required N` to set that key's
 capture bar (default 6).
@@ -76,7 +78,7 @@ capture bar (default 6).
 ## 3. Run the verification service
 
 ```sh
-MC_KEYS_FILE=server/keys.json \
+MC_KEYS_FILE=/etc/moncaptcha/keys.json \
 MC_CHALLENGE_ORIGINS='https://captcha.yourdomain.com' \
 node server/verify.mjs                                   # -> :8091
 ```

@@ -39,3 +39,8 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# ---- Local static-serve staging dir (README quick start) and stray key files ----
+public/
+keys.json
+*.keys.json

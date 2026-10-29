@@ -135,6 +135,10 @@ const KEYS = (() => {
     const file = process.env.MC_KEYS_FILE;
     if (file) {
         try {
+            // Plaintext secrets: say so loudly if other local users can read them.
+            if (process.platform !== 'win32' && (fs.statSync(file).mode & 0o077)) {
+                console.warn(`[verify] WARNING: ${file} is readable by group/others — chmod 600 it`);
+            }
             return JSON.parse(fs.readFileSync(file, 'utf8'));
         } catch (e) {
             console.error(`[verify] cannot read MC_KEYS_FILE=${file}: ${e.message}`);
@@ -162,6 +166,11 @@ for (const [k, cfg] of Object.entries(KEYS)) {
     }
 }
 
+/* Own-property lookup only. A plain KEYS[sitekey] resolves "__proto__",
+   "constructor", "toString"... to inherited values, which pass a truthiness
+   check and then throw on cfg.origins. */
+const keyFor = (sitekey) => (Object.hasOwn(KEYS, sitekey) ? KEYS[sitekey] : null);
+
 const requiredFor = (cfg) => (cfg.required != null ? cfg.required : DEFAULT_REQUIRED);
 
 const b64u = (buf) => Buffer.from(buf).toString('base64')
@@ -185,6 +194,29 @@ function verifySigned(token, secret) {
     if (!crypto.timingSafeEqual(given, expected)) return { ok: false, err: 'bad-signature' };
     try { return { ok: true, payload: JSON.parse(unb64u(parts[0]).toString('utf8')) }; }
     catch (e) { return { ok: false, err: 'malformed' }; }
+}
+
+/* Signed-payload purposes. Challenges and tokens are both HMAC'd with the site
+   key's secret, so without a purpose tag one would verify as the other: a
+   challenge blob straight out of /challenge would pass /siteverify without
+   ever going through /issue's timing and points checks. Every payload carries
+   `t`, and every consumer demands the one it expects. */
+const PURPOSE_CHALLENGE = 'c';
+const PURPOSE_TOKEN = 'tok';
+
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const isStr = (v) => typeof v === 'string' && v.length > 0;
+
+/* A completion token exactly as /issue mints it — and nothing less. Checked
+   before the token's nonce is burned, so a rejected payload consumes nothing. */
+function isCompletionToken(p, sitekey) {
+    return !!p && typeof p === 'object'
+        && p.t === PURPOSE_TOKEN
+        && p.k === sitekey
+        && isStr(p.n) && isStr(p.o)
+        && isNum(p.iat) && isNum(p.exp)
+        && isNum(p.req) && p.req > 0 && isNum(p.p) && p.p >= p.req
+        && isNum(p.ms) && p.ms >= 0;
 }
 
 /* ---- single-use nonces (replay protection) ----
@@ -221,25 +253,47 @@ function rateOk(ip, sitekey) {
     return ipOk && siteOk;
 }
 
+class BodyError extends Error {
+    constructor(status, code) { super(code); this.status = status; this.code = code; }
+}
+
+/* Resolves to a plain object or rejects with a BodyError. Valid JSON is not
+   necessarily an object — `null`, `[]`, `7` and `"x"` all parse — and every
+   handler reads fields straight off the result, so anything else is refused
+   here rather than throwing later. */
 function readBody(req) {
     return new Promise((resolve, reject) => {
         let n = 0; const chunks = [];
         req.on('data', (c) => {
             n += c.length;
-            if (n > MAX_BODY) { reject(new Error('body too large')); req.destroy(); return; }
+            if (n > MAX_BODY) { reject(new BodyError(413, 'body-too-large')); req.destroy(); return; }
             chunks.push(c);
         });
         req.on('end', () => {
             const s = Buffer.concat(chunks).toString('utf8');
             if (!s) return resolve({});
-            try { return resolve(JSON.parse(s)); } catch (e) { /* fall through to form */ }
-            const out = {};
-            for (const [k, v] of new URLSearchParams(s)) out[k] = v;
-            resolve(out);
+            let parsed;
+            try { parsed = JSON.parse(s); } catch (e) {
+                const out = {};
+                for (const [k, v] of new URLSearchParams(s)) out[k] = v;
+                return resolve(out);
+            }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return reject(new BodyError(400, 'invalid-body'));
+            }
+            resolve(parsed);
         });
-        req.on('error', reject);
+        req.on('error', () => reject(new BodyError(400, 'bad-request')));
     });
 }
+
+/* A body field as a string; '' when absent or not a scalar. */
+const field = (body, k) => {
+    const v = Object.hasOwn(body, k) ? body[k] : undefined;
+    return typeof v === 'string' || typeof v === 'number' ? String(v) : '';
+};
+
+const bodyErr = (e) => [e instanceof BodyError ? e.status : 400, { error: e instanceof BodyError ? e.code : 'bad-request' }];
 
 function send(res, code, obj, extraHeaders) {
     const body = JSON.stringify(obj);
@@ -251,8 +305,20 @@ function send(res, code, obj, extraHeaders) {
     res.end(body);
 }
 
-const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+/* Error boundary. handle() is async, so anything it throws is a rejected
+   promise; left unhandled, Node's default --unhandled-rejections=throw kills
+   the process and one malformed request takes the service down for everyone. */
+const server = http.createServer((req, res) => {
+    handle(req, res).catch((e) => {
+        console.error('[verify] request failed:', e && e.stack ? e.stack : e);
+        if (!res.headersSent) send(res, 500, { error: 'internal-error' });
+        else res.destroy();
+    });
+});
+
+async function handle(req, res) {
+    // Fixed base: only the path is used, and Host is caller-controlled.
+    const url = new URL(req.url || '/', 'http://localhost');
     const origin = req.headers.origin || '';
 
     if (url.pathname === '/health') return send(res, 200, { ok: true });
@@ -281,10 +347,10 @@ const server = http.createServer(async (req, res) => {
         if (req.method !== 'POST') return send(res, 405, { error: 'method-not-allowed' });
 
         let body;
-        try { body = await readBody(req); } catch (e) { return send(res, 413, { error: 'body-too-large' }); }
+        try { body = await readBody(req); } catch (e) { return send(res, ...bodyErr(e), corsForSite(origin)); }
 
-        const sitekey = String(body.sitekey || '');
-        const cfg = KEYS[sitekey];
+        const sitekey = field(body, 'sitekey');
+        const cfg = keyFor(sitekey);
         if (!cfg) return send(res, 403, { error: 'invalid-sitekey' }, corsForSite(origin));
         if (!origin || !cfg.origins.includes(origin)) {
             return send(res, 403, { error: 'domain-not-allowed', sitekey }, corsForSite(origin));
@@ -305,7 +371,7 @@ const server = http.createServer(async (req, res) => {
            On its own it proves nothing; it stops the world being negotiable. */
         const seed = crypto.randomBytes(4).readUInt32BE(0) >>> 0;
         const challenge = sign({
-            t: 'c', k: sitekey, o: origin, n: b64u(crypto.randomBytes(9)),
+            t: PURPOSE_CHALLENGE, k: sitekey, o: origin, n: b64u(crypto.randomBytes(9)),
             seed, req: required,
             iat: now, exp: now + CHALLENGE_TTL_MS,
         }, cfg.secret);
@@ -324,7 +390,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method !== 'POST') return send(res, 405, { error: 'method-not-allowed' });
 
         let body;
-        try { body = await readBody(req); } catch (e) { return send(res, 413, { error: 'body-too-large' }); }
+        try { body = await readBody(req); } catch (e) { return send(res, ...bodyErr(e), corsFor(origin)); }
 
         // Request Origin is the CHALLENGE host — this fetch comes from inside the
         // challenge frame, so it is the same for every customer and says nothing
@@ -334,16 +400,16 @@ const server = http.createServer(async (req, res) => {
             return send(res, 403, { error: 'bad-challenge-origin' }, corsFor(origin));
         }
 
-        const sitekey = String(body.sitekey || '');
-        const cfg = KEYS[sitekey];
+        const sitekey = field(body, 'sitekey');
+        const cfg = keyFor(sitekey);
         if (!cfg) return send(res, 403, { error: 'invalid-sitekey' }, corsFor(origin));
 
         /* The embedding origin comes out of the /challenge blob — which WE
            signed, after the browser told us the customer page's real origin.
            It is never read from the request body, so a caller cannot name a
            domain it does not actually run on. */
-        const ch = verifySigned(body.challenge, cfg.secret);
-        if (!ch.ok || ch.payload.t !== 'c' || ch.payload.k !== sitekey) {
+        const ch = verifySigned(field(body, 'challenge'), cfg.secret);
+        if (!ch.ok || !ch.payload || ch.payload.t !== PURPOSE_CHALLENGE || ch.payload.k !== sitekey) {
             return send(res, 403, { error: 'invalid-challenge' }, corsFor(origin));
         }
         if (!ch.payload.exp || Date.now() > ch.payload.exp) {
@@ -381,13 +447,14 @@ const server = http.createServer(async (req, res) => {
            captures — but it can no longer be inflated to an arbitrary score,
            and a caller cannot lower the bar it has to clear. */
         const required = Number(ch.payload.req) || DEFAULT_REQUIRED;
-        const points = Number(body.points) || 0;
+        const points = Number(field(body, 'points')) || 0;
         if (!(points >= required)) {
             return send(res, 403, { error: 'insufficient-points', required }, corsFor(origin));
         }
 
         const now = Date.now();
         const token = sign({
+            t: PURPOSE_TOKEN,
             k: sitekey,
             o: siteOrigin,
             n: b64u(crypto.randomBytes(12)),
@@ -408,11 +475,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/siteverify') {
         if (req.method !== 'POST') return send(res, 405, { error: 'method-not-allowed' });
         let body;
-        try { body = await readBody(req); } catch (e) { return send(res, 413, { error: 'body-too-large' }); }
+        try { body = await readBody(req); } catch (e) { return send(res, ...bodyErr(e)); }
 
         const errs = [];
-        const secret = String(body.secret || '');
-        const response = String(body.response || '');
+        const secret = field(body, 'secret');
+        const response = field(body, 'response');
         if (!secret) errs.push('missing-input-secret');
         if (!response) errs.push('missing-input-response');
         if (errs.length) return send(res, 200, { success: false, 'error-codes': errs });
@@ -431,7 +498,11 @@ const server = http.createServer(async (req, res) => {
         if (!v.ok) return send(res, 200, { success: false, 'error-codes': ['invalid-input-response'] });
 
         const p = v.payload;
-        if (p.k !== sitekey) return send(res, 200, { success: false, 'error-codes': ['sitekey-mismatch'] });
+        if (p && typeof p === 'object' && p.k !== sitekey) return send(res, 200, { success: false, 'error-codes': ['sitekey-mismatch'] });
+        /* Authentic is not complete: a /challenge blob is signed with this very
+           secret. Only a token /issue minted counts, and it is checked before
+           its nonce is burned. */
+        if (!isCompletionToken(p, sitekey)) return send(res, 200, { success: false, 'error-codes': ['invalid-input-response'] });
         if (!p.exp || Date.now() > p.exp) return send(res, 200, { success: false, 'error-codes': ['timeout-or-duplicate'] });
         if (used.has(`t:${p.n}`)) return send(res, 200, { success: false, 'error-codes': ['timeout-or-duplicate'] });
         used.set(`t:${p.n}`, p.exp);   // burn it: one token, one verification
@@ -457,7 +528,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     send(res, 404, { error: 'not-found' });
-});
+}
 
 function cors(origin) {
     return {

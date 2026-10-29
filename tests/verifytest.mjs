@@ -11,11 +11,19 @@
      - MC_TRUST_PROXY=1 / =N     -> the per-IP bucket keys on the right-most
                                     untrusted X-Forwarded-For hop, so rotating
                                     the client-controlled left part is useless
+     - token purpose             -> a signed /challenge blob is refused by
+                                    /siteverify, and the refusal burns nothing
+     - malformed bodies          -> null / arrays / scalars / inherited key
+                                    names get a 4xx, and the process survives
+     - keygen                    -> refuses keys files inside the repo; an
+                                    existing readable file ends up 0600
 
    Run:  cd tests && node verifytest.mjs                                      */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 
 const VERIFY = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'server', 'verify.mjs');
 const CHALLENGE = 'http://localhost:8080';
@@ -140,6 +148,89 @@ console.log('VERIFYTEST_BEGIN');
     }
     ok('MC_TRUST_PROXY=2 keys on the second hop from the right', limited);
     s.child.kill();
+}
+
+// ---- a signed CHALLENGE is not a completion token ----
+{
+    const s = await start({ MC_KEYS: KEYS, MC_MIN_SOLVE_MS: '0' });
+    const c = await challenge(s);
+    const v = await post(`${s.url}/siteverify`, { secret: 'test-secret', response: c.data.challenge });
+    ok('siteverify rejects an authentic /challenge blob', v.data.success === false
+        && v.data['error-codes']?.[0] === 'invalid-input-response', JSON.stringify(v.data));
+
+    // ...and that refusal must not have burned anything: the same challenge
+    // still goes through /issue, and its token still verifies exactly once.
+    const t = await issue(s, c.data.challenge);
+    ok('the rejected challenge is still redeemable', t.status === 200, 'status=' + t.status);
+    const v1 = await post(`${s.url}/siteverify`, { secret: 'test-secret', response: t.data.token });
+    const v2 = await post(`${s.url}/siteverify`, { secret: 'test-secret', response: t.data.token });
+    ok('the issued token verifies once', v1.data.success === true && v2.data.success === false,
+        JSON.stringify([v1.data.success, v2.data['error-codes']]));
+    s.child.kill();
+}
+
+// ---- malformed bodies are refused, never fatal ----
+{
+    const s = await start({ MC_KEYS: KEYS });
+    const raw = (p, body, headers) => fetch(`${s.url}${p}`, {
+        method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, headers || {}), body,
+    }).then(async (r) => ({ status: r.status, data: await r.json().catch(() => ({})) }));
+
+    const cases = [
+        ['/challenge', 'null', { origin: SITE }],
+        ['/challenge', '[]', { origin: SITE }],
+        ['/challenge', '7', { origin: SITE }],
+        ['/issue', 'null', { origin: CHALLENGE }],
+        ['/issue', '"x"', { origin: CHALLENGE }],
+        ['/siteverify', 'null'],
+        ['/siteverify', 'true'],
+    ];
+    for (const [p, body, headers] of cases) {
+        const r = await raw(p, body, headers);
+        ok(`${p} answers ${body} with 400`, r.status === 400 && r.data.error === 'invalid-body', JSON.stringify(r));
+    }
+    for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+        const r = await raw('/challenge', JSON.stringify({ sitekey: k }), { origin: SITE });
+        ok(`inherited name "${k}" is not a site key`, r.status === 403 && r.data.error === 'invalid-sitekey',
+            JSON.stringify(r));
+    }
+    const r = await raw('/challenge', JSON.stringify({ sitekey: { toString: 1 } }), { origin: SITE });
+    ok('a non-scalar sitekey is refused', r.status === 403, 'status=' + r.status);
+
+    const h = await fetch(`${s.url}/health`).then((x) => x.json()).catch(() => null);
+    ok('the server is still up after all of it', h && h.ok === true && s.child.exitCode === null);
+    s.child.kill();
+}
+
+// ---- keygen: keys never land in the repo; files end up owner-only ----
+{
+    const KEYGEN = path.join(path.dirname(VERIFY), 'keygen.mjs');
+    const run = (args) => new Promise((resolve) => {
+        const c = spawn(process.execPath, [KEYGEN, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        c.stdout.on('data', (d) => { out += d; });
+        c.stderr.on('data', (d) => { out += d; });
+        c.on('exit', (code) => resolve({ code, out }));
+    });
+
+    const inRepo = path.join(path.dirname(VERIFY), 'keys.json');
+    const r1 = await run(['--origin', 'https://a.example', '--file', inRepo]);
+    ok('keygen refuses a keys file inside the repository', r1.code === 1 && !fs.existsSync(inRepo),
+        r1.out.split('\n')[0]);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-keygen-'));
+    const f = path.join(dir, 'keys.json');
+    fs.writeFileSync(f, '{}\n', { mode: 0o644 });
+    fs.chmodSync(f, 0o644);
+    const r2 = await run(['--origin', 'https://a.example', '--file', f]);
+    const db = JSON.parse(fs.readFileSync(f, 'utf8'));
+    ok('keygen merges into an existing file', r2.code === 0 && Object.keys(db).length === 1, r2.out.split('\n')[1]);
+    if (process.platform !== 'win32') {
+        const mode = fs.statSync(f).mode & 0o777;
+        ok('a world-readable keys file is rewritten owner-only', mode === 0o600, 'mode=' + mode.toString(8));
+    }
+    ok('no temp files are left behind', fs.readdirSync(dir).length === 1, fs.readdirSync(dir).join(','));
+    fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`\n  ---- verifytest: ${pass} passed, ${fail} failed ----`);

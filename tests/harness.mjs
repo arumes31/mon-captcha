@@ -48,6 +48,9 @@ export const BENIGN = [
   /favicon/i,                            // /favicon.ico is not served by http.server
   /Failed to load resource.*favicon/i,
   /Download the (React|Vue) DevTools/i,
+  /sri-probe\.js\?tampered/,             // src/boot.js: the wrong-hash probe being blocked
+                                         // is the PASS signal of the integrity gate
+                                         // (the ?ok probe is NOT covered — its failure is real)
   /net::ERR_/i,                          // Phase 4b: transient CDN (jsdelivr) network drops
                                          // during a load/retry — the game's readiness is
                                          // separately gated by waitForReady (a persistent

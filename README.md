@@ -88,16 +88,22 @@ Text/image CAPTCHAs are miserable for humans and increasingly trivial for bots. 
 
 ## Quick start
 
-The game is **buildless** — `index.html` loads `main.js` as a native ES module, and Three.js itself resolves from the jsdelivr CDN via an import map (every file pinned by SHA-384 in the map's `integrity` block, so a tampered CDN response is refused). There's nothing to `npm install` or compile for the game itself.
+The game is **buildless** — `index.html` loads `main.js` as a native ES module, and Three.js itself resolves from the jsdelivr CDN via an import map (every file pinned by SHA-384 in the map's `integrity` block, so a tampered CDN response is refused; `src/boot.js` first checks the browser actually enforces that block and refuses to start otherwise). There's nothing to `npm install` or compile for the game itself.
 
 ### Option A — any static file server
 
+Serve a directory that holds **only the public files** — not the repository root, which also
+contains server code, tooling and anything you drop into it locally:
+
 ```bash
-python3 -m http.server 8080
-# or: npx http-server -p 8080
+mkdir -p public && cp -r index.html test.html main.js style.css src embed assets public/
+python3 -m http.server 8080 --directory public
+# or: npx http-server public -p 8080
 ```
 
-Then open `http://localhost:8080/index.html`.
+Then open `http://localhost:8080/index.html`. (The Docker image below does the same thing: it
+copies an explicit allow-list into nginx's web root.) Site-key files never belong under a
+served directory — `server/keygen.mjs` refuses to write one inside the repository.
 
 ### Option B — Docker
 
@@ -172,7 +178,7 @@ verification service:
 ```bash
 node server/keygen.mjs --origin https://customer-a.com \
                        --origin https://www.customer-a.com \
-                       --file server/keys.json
+                       --file /etc/moncaptcha/keys.json
 ```
 
 ```
@@ -189,7 +195,7 @@ node server/keygen.mjs --origin https://customer-a.com \
 Then run the service:
 
 ```bash
-MC_KEYS_FILE=server/keys.json \
+MC_KEYS_FILE=/etc/moncaptcha/keys.json \
 MC_CHALLENGE_ORIGINS=https://captcha.yourdomain.com \
 node server/verify.mjs
 ```
