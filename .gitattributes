@@ -1,0 +1,2 @@
+# Hashed byte-for-byte into the import maps (sha384) - never convert line endings.
+src/sri-probe.js -text

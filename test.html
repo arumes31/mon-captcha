@@ -23,9 +23,13 @@
         "three/addons/postprocessing/EffectComposer.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js",
         "three/addons/postprocessing/RenderPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js",
         "three/addons/postprocessing/UnrealBloomPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js",
-        "three/addons/postprocessing/OutputPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js"
+        "three/addons/postprocessing/OutputPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/OutputPass.js",
+        "mc-sri-probe/ok": "./src/sri-probe.js?ok",
+        "mc-sri-probe/tampered": "./src/sri-probe.js?tampered"
       },
       "integrity": {
+        "./src/sri-probe.js?ok": "sha384-H+J0ye+mevjW4yY+3xP8vo86/7IvJArug+R1OK6U6UVvrs4xezU9fSrLC+e8C1ga",
+        "./src/sri-probe.js?tampered": "sha384-yff8IxDebaCAYk/uVQKugklyxgplc8N/8qw9pfU48lItah3Vtoxti6bv8m1l2M8G",
         "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js": "sha384-61S/Nu32S3E5+n+KpCOTb2eRYps6fVKm+9Gz1QBvSePFthb46f063Aa/qe/lykFZ",
         "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/PointerLockControls.js": "sha384-DyPEugnjSi/n0L5Cne+ve49CSAs61osB3dOTC0btEP0lbXLHgNBE6EaQ5rTt5zot",
         "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/objects/Sky.js": "sha384-wuDrkXs4/6ZP+utdQQ7XggxDVg1Lt50OuvF4p/Ac5chibUcyJqnBdJqACclm1Hea",
@@ -356,8 +360,9 @@
         <p>Loading monCAPTCHA&hellip;</p>
     </div>
 
-    <!-- Game module -->
-    <script type="module" src="main.js" crossorigin="anonymous"></script>
+    <!-- Game module, behind the integrity gate: src/boot.js refuses to load main.js (and so
+         the CDN graph) unless this browser enforces the import map "integrity" above. -->
+    <script type="module" src="src/boot.js" crossorigin="anonymous"></script>
 
     <!-- Test harness: live diagnostic panel. Loaded as a module so it runs after main.js. -->
     <script type="module">
