@@ -277,7 +277,7 @@ src/
 ├── mountain/               landmark mountain + waterfall/basin/vent dressing
 ├── flora/                  trees, bushes, reeds, lily pads, mushrooms, grass
 ├── weather/                clear/overcast/windy/rain/fog state machine
-├── caves/                  the whole underground layer (16 modules: rock
+├── caves/                  the whole underground layer (18 modules: rock
 │                            shell, water, crystals, fungi, decor, lighting,
 │                            atmosphere, gameplay, audio, theme registry…)
 └── creatures/               bestiary, body plans, spawn, behavior/AI, animation
@@ -290,13 +290,13 @@ server/
 ├── verify.mjs             token issuing + /siteverify (node built-ins only)
 └── keygen.mjs             mint domain-restricted site key / secret pairs
 
-docs/INTEGRATION.md        full widget reference + threat model
+docs/INTEGRATION.md        full widget reference + threat model (DocDR)
 assets/
 ├── logo.png              brand mark — README header, favicon, portal emblem
 └── captcha-banner*.svg   README's clickable widget still (light/dark)
 
 tests/                     Playwright QA harness (dev-only, see tests/README.md)
-.github/workflows/         CI, CodeQL, dependency review, GHCR image, Pages demo
+.github/workflows/         CI, CodeQL, security, penetration test, GHCR, Pages demo
 Dockerfile, docker-compose*.yml
 ```
 
@@ -313,15 +313,21 @@ Every module stays under ~700 lines by convention — related concerns get a new
 
 The dev-only QA harness lives in [`tests/`](tests/README.md) — Playwright-driven core assertions, an accessibility audit (axe-core), a many-seed invariant sweep, visual regression against committed baselines, and a cross-browser/mobile-device matrix. None of it ships with the game.
 
-Five workflows run in `.github/workflows/`:
+Eleven workflows run in `.github/workflows/`:
 
 | Workflow | What it does |
 | --- | --- |
 | `ci.yml` | Runs the full `tests/` suite on every push/PR to `main` |
+| `cleanup-ghcr.yml` | Prunes untagged and stale container packages from GHCR |
 | `codeql.yml` | GitHub CodeQL security scan (JS/TS) |
 | `dependency-review.yml` | Flags vulnerable/incompatible new dependencies on PRs |
 | `docker-ghcr.yml` | Builds a multi-arch (amd64/arm64) image and pushes it to GHCR on pushes to `main`/version tags |
+| `gitleaks.yml` | Scans commits and pull requests for leaked secrets |
+| `gito-code-review.yml` | Automated pull request code reviews powered by Gito |
+| `openrabbit-reviewer.yml` | Automated pull request code reviews powered by OpenRabbit |
 | `pages.yml` | Publishes the playable demo linked from [Try it](#try-it) to GitHub Pages on pushes to `main` |
+| `security.yml` | Daily security analysis, vulnerability and dependency scanning |
+| `strix-penetration-test.yml` | Automated penetration testing on pull requests and workflow dispatch |
 
 `pages.yml` copies the same static files the Dockerfile serves, minus `embed/` and the portal —
 both need a server Pages can't run, so publishing them would only ship a demo that fails on

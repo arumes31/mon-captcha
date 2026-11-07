@@ -1,9 +1,10 @@
 # ---- Local tooling / assistant config — never shipped ----
 .claude/
 .roo/
-# Only the scratch plans, NOT docs/ wholesale — docs/INTEGRATION.md is the
-# widget reference README.md links to, and ignoring it made that link 404.
-docs/plans/
+docs/
+.stfolder/
+.stignore
+.kimi-code/
 graphify-out/
 .clinerules
 .roorules
