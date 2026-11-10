@@ -1,8 +1,8 @@
 name: Security
 
+# Pushes to main/tags run these checks through docker-ghcr.yml's reusable
+# `security` call (which gates the image publish); no separate push trigger.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   schedule:
